@@ -9,6 +9,17 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) vi
 
 Use this section while developing. Before a release, move bullets into a new `## [X.Y.Z] - date` section and bump `FigmaUI/package.json` (see [`FigmaUI/RELEASING.md`](./FigmaUI/RELEASING.md)).
 
+## [1.2.0] - 2026-04-26
+
+### Added
+
+- **Split view source sync**: clicking a line in the editor or a block in the preview scrolls the other pane to the same logical place using **markdown source byte offsets** (unist positions), not raw line numbers — hidden `<script>` / `<style>` blocks in the raw file no longer throw off alignment with the rendered preview.
+- `rehypeSourceOffsets` + helpers (`sourceOffsetContentToPrepared` / `sourceOffsetPreparedToContent`) and Vitest coverage for offset mapping and DOM lookup.
+
+### Changed
+
+- Split mode uses the live document string for the preview (not deferred) so sync targets stay aligned while editing.
+
 ## [1.1.0] - 2026-04-23
 
 ### Added
@@ -39,6 +50,7 @@ First public baseline for **MD Studio**: Electron + Vite + React Markdown editor
 - Windows **NSIS** installer and **portable** `.exe` via `electron-builder`.
 - `npm run build:release` and [`FigmaUI/build-github-release.ps1`](./FigmaUI/build-github-release.ps1) for GitHub Release artifacts and `SHA256SUMS.txt`.
 
-[Unreleased]: https://github.com/dominikrose887/md/compare/v1.1.0...HEAD  
+[Unreleased]: https://github.com/dominikrose887/md/compare/v1.2.0...HEAD  
+[1.2.0]: https://github.com/dominikrose887/md/compare/v1.1.0...v1.2.0  
 [1.1.0]: https://github.com/dominikrose887/md/compare/v1.0.0...v1.1.0  
 [1.0.0]: https://github.com/dominikrose887/md/releases/tag/v1.0.0

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useDeferredValue, useMemo } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { Toolbar } from './components/Toolbar';
 import { Editor, type EditorHandle, type FindOptions } from './components/Editor';
-import { Preview } from './components/Preview';
+import { Preview, type PreviewHandle } from './components/Preview';
 import { StatusBar } from './components/StatusBar';
 import { EmptyState } from './components/EmptyState';
 import { ErrorState } from './components/ErrorState';
@@ -37,6 +37,7 @@ export default function App() {
   const nativeFilePathRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<EditorHandle>(null);
+  const previewRef = useRef<PreviewHandle>(null);
   const deferredContent = useDeferredValue(content);
   const findOptions: FindOptions = useMemo(
     () => ({
@@ -647,6 +648,8 @@ export default function App() {
                     onCursorPositionChange={setCursorPosition}
                     showLineNumbers={true}
                     resetScrollToken={resetScrollToken}
+                    splitPaneSync={viewMode === 'split'}
+                    onSplitPaneSourceNavigate={(offset) => previewRef.current?.scrollToSourceOffset(offset)}
                   />
                 </Panel>
                 {viewMode === 'split' && (
@@ -658,11 +661,14 @@ export default function App() {
             {(viewMode === 'split' || viewMode === 'preview') && (
               <Panel defaultSize={50} minSize={30} className="h-full min-h-0">
                 <Preview
-                  content={deferredContent}
+                  ref={previewRef}
+                  content={viewMode === 'split' ? content : deferredContent}
                   theme={theme}
                   filePath={filePath}
                   resetScrollToken={resetScrollToken}
                   assignPdfPrintRootId
+                  splitPaneSync={viewMode === 'split'}
+                  onSplitPanePreviewNavigate={(offset) => editorRef.current?.scrollToSourceOffset(offset)}
                 />
               </Panel>
             )}

@@ -6,6 +6,9 @@ interface EditorProps {
   onCursorPositionChange?: (cursorPosition: { line: number; col: number }) => void;
   showLineNumbers?: boolean;
   resetScrollToken?: number;
+  /** When set, clicking the editor reports the caret byte offset for split-pane preview sync. */
+  splitPaneSync?: boolean;
+  onSplitPaneSourceNavigate?: (sourceOffset: number) => void;
 }
 
 export interface FindOptions {
@@ -22,6 +25,7 @@ export interface EditorHandle {
   replaceAll: (query: string, replaceWith: string, options?: FindOptions) => number;
   getCurrentMatchIndex: (query: string, options?: FindOptions) => number;
   countMatches: (query: string, options?: FindOptions) => number;
+  scrollToSourceOffset: (offset: number) => void;
 }
 
 export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
@@ -29,7 +33,9 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
   onChange,
   onCursorPositionChange,
   showLineNumbers = true,
-  resetScrollToken
+  resetScrollToken,
+  splitPaneSync,
+  onSplitPaneSourceNavigate
 }, ref) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
@@ -262,6 +268,18 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
 
     countMatches(query: string, options?: FindOptions) {
       return findAllMatches(query, options).length;
+    },
+
+    scrollToSourceOffset(offset: number) {
+      const textarea = textareaRef.current;
+      if (!textarea) {
+        return;
+      }
+      const safe = Math.max(0, Math.min(offset, textarea.value.length));
+      textarea.focus();
+      textarea.setSelectionRange(safe, safe);
+      moveViewportToSelection(safe);
+      onCursorPositionChange?.(getCursorPosition(textarea.value, safe));
     }
   }), [onChange, onCursorPositionChange]);
 
@@ -300,12 +318,18 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
             const end = target.value.length;
             target.setSelectionRange(end, end);
             onCursorPositionChange?.(getCursorPosition(target.value, end));
+            if (splitPaneSync && onSplitPaneSourceNavigate) {
+              onSplitPaneSourceNavigate(end);
+            }
           }
         }}
         onChange={(e) => onChange(e.target.value, getCursorPosition(e.target.value, e.target.selectionStart))}
         onClick={(e) => {
           const target = e.target as HTMLTextAreaElement;
           onCursorPositionChange?.(getCursorPosition(target.value, target.selectionStart));
+          if (splitPaneSync && onSplitPaneSourceNavigate) {
+            onSplitPaneSourceNavigate(target.selectionStart);
+          }
         }}
         onKeyUp={(e) => {
           const target = e.target as HTMLTextAreaElement;

@@ -1,4 +1,5 @@
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -10,6 +11,13 @@ import 'katex/dist/katex.min.css';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { createKatexSanitizeSchema } from '@/utils/katexSanitizeSchema';
+import { rehypeSourceOffsets } from '@/utils/rehypeSourceOffsets';
+import {
+  findElementForSourceOffset,
+  readDataMdStart,
+  sourceOffsetContentToPrepared,
+  sourceOffsetPreparedToContent
+} from '@/utils/sourceOffsetSync';
 
 const KATEX_REHYPE_OPTIONS = { output: 'html' as const, throwOnError: false };
 
@@ -34,25 +42,64 @@ function resolveFenceLanguage(className?: string) {
   return aliases[raw] ?? raw;
 }
 
-interface PreviewProps {
+function mdOffsetsFromProps(props: Record<string, unknown>): { start: number; end?: number } | null {
+  const asNum = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  let start = asNum(props.dataMdStart);
+  let end = asNum(props.dataMdEnd);
+  const node = props.node as { position?: { start?: { offset?: number }; end?: { offset?: number } } } | undefined;
+  if (start === null && node?.position?.start?.offset !== undefined) {
+    start = node.position.start.offset;
+  }
+  if (end === null && node?.position?.end?.offset !== undefined) {
+    end = node.position.end.offset;
+  }
+  if (start === null) {
+    return null;
+  }
+  return { start, end: end ?? undefined };
+}
+
+function wrapFenceForSourceSync(inner: ReactNode, props: Record<string, unknown>) {
+  const o = mdOffsetsFromProps(props);
+  if (!o) {
+    return inner;
+  }
+  return (
+    <div data-md-start={o.start} data-md-end={o.end ?? o.start}>
+      {inner}
+    </div>
+  );
+}
+
+export interface PreviewHandle {
+  scrollToSourceOffset: (offset: number) => void;
+}
+
+export interface PreviewProps {
   content: string;
   theme: 'light' | 'dark';
   filePath?: string;
   resetScrollToken?: number;
   /** When true, outer scroll container gets id used for Electron printToPDF capture. */
   assignPdfPrintRootId?: boolean;
+  /** Split view: clicking preview maps back to the raw editor by source offset. */
+  splitPaneSync?: boolean;
+  onSplitPanePreviewNavigate?: (sourceOffset: number) => void;
 }
 
-export const Preview = memo(function Preview({
-  content,
-  theme,
-  filePath,
-  resetScrollToken,
-  assignPdfPrintRootId
-}: PreviewProps) {
+const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInner(
+  {
+    content,
+    theme,
+    filePath,
+    resetScrollToken,
+    assignPdfPrintRootId,
+    splitPaneSync,
+    onSplitPanePreviewNavigate
+  },
+  ref
+) {
   const previewContainerRef = useRef<HTMLDivElement>(null);
-
-  useMemo(() => resetScrollToken, [resetScrollToken]);
 
   const sanitizeSchema = useMemo(() => {
     const base = createKatexSanitizeSchema();
@@ -115,16 +162,70 @@ export const Preview = memo(function Preview({
       previewContainerRef.current.scrollTop = 0;
     }
   }, [resetScrollToken]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      scrollToSourceOffset(offset: number) {
+        const root = previewContainerRef.current;
+        if (!root) {
+          return;
+        }
+        const preparedOffset = sourceOffsetContentToPrepared(content, offset);
+        const el = findElementForSourceOffset(root, preparedOffset);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+    }),
+    [content]
+  );
+
   const hasRawHtml = useMemo(() => /<[/a-zA-Z][^>]*>/.test(preparedContent), [preparedContent]);
   const rehypePlugins = useMemo(
     () =>
       hasRawHtml
-        ? [[rehypeRaw], [rehypeKatex, KATEX_REHYPE_OPTIONS], [rehypeSanitize, sanitizeSchema]]
-        : [[rehypeKatex, KATEX_REHYPE_OPTIONS], [rehypeSanitize, sanitizeSchema]],
+        ? [
+            [rehypeRaw],
+            [rehypeKatex, KATEX_REHYPE_OPTIONS],
+            rehypeSourceOffsets,
+            [rehypeSanitize, sanitizeSchema]
+          ]
+        : [[rehypeKatex, KATEX_REHYPE_OPTIONS], rehypeSourceOffsets, [rehypeSanitize, sanitizeSchema]],
     [hasRawHtml, sanitizeSchema]
   );
 
   const remarkPlugins = useMemo(() => [remarkGfm, remarkMath], []);
+
+  const handleMarkdownBodyClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!splitPaneSync || !onSplitPanePreviewNavigate) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (!target) {
+      return;
+    }
+    if (target.closest('input')) {
+      return;
+    }
+    const link = target.closest('a[href]') as HTMLAnchorElement | null;
+    if (link) {
+      const href = link.getAttribute('href') || '';
+      if (!href.startsWith('#')) {
+        return;
+      }
+    }
+    let el: HTMLElement | null = target;
+    const stop = event.currentTarget;
+    while (el && el !== stop) {
+      const start = readDataMdStart(el);
+      if (start !== null) {
+        onSplitPanePreviewNavigate(sourceOffsetPreparedToContent(content, start));
+        return;
+      }
+      el = el.parentElement;
+    }
+  };
 
   const markdownComponents = useMemo(
     () => ({
@@ -171,8 +272,8 @@ export const Preview = memo(function Preview({
           <a
             href={href}
             {...props}
-            onClick={(event) => {
-              event.preventDefault();
+            onClick={(clickEvent) => {
+              clickEvent.preventDefault();
               const container = previewContainerRef.current;
               if (!container) {
                 return;
@@ -202,25 +303,31 @@ export const Preview = memo(function Preview({
             throwOnError: false,
             output: 'html'
           });
-          return <div className="katex-display overflow-x-auto my-4" dangerouslySetInnerHTML={{ __html: html }} />;
+          return wrapFenceForSourceSync(
+            <div className="katex-display overflow-x-auto my-4" dangerouslySetInnerHTML={{ __html: html }} />,
+            props
+          );
         }
         return !inline && language ? (
-          <SyntaxHighlighter
-            style={theme === 'dark' ? oneDark : oneLight}
-            language={language}
-            PreTag="pre"
-            className="rounded-md"
-            customStyle={{
-              marginBottom: '16px',
-              padding: '16px',
-              borderRadius: '6px',
-              fontSize: '14px',
-              lineHeight: 1.45
-            }}
-            {...props}
-          >
-            {String(children).replace(/\n$/, '')}
-          </SyntaxHighlighter>
+          wrapFenceForSourceSync(
+            <SyntaxHighlighter
+              style={theme === 'dark' ? oneDark : oneLight}
+              language={language}
+              PreTag="pre"
+              className="rounded-md"
+              customStyle={{
+                marginBottom: '16px',
+                padding: '16px',
+                borderRadius: '6px',
+                fontSize: '14px',
+                lineHeight: 1.45
+              }}
+              {...props}
+            >
+              {String(children).replace(/\n$/, '')}
+            </SyntaxHighlighter>,
+            props
+          )
         ) : (
           <code className={className} {...props}>
             {children}
@@ -237,15 +344,17 @@ export const Preview = memo(function Preview({
       id={assignPdfPrintRootId ? 'md-studio-pdf-print-root' : undefined}
       className="h-full min-h-0 overflow-y-auto bg-background"
     >
-      <div className="markdown-body p-8 max-w-4xl mx-auto">
-        <ReactMarkdown
-          remarkPlugins={remarkPlugins}
-          rehypePlugins={rehypePlugins as any}
-          components={markdownComponents}
-        >
+      <div
+        className="markdown-body p-8 max-w-4xl mx-auto"
+        onClick={handleMarkdownBodyClick}
+        role="presentation"
+      >
+        <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins as any} components={markdownComponents}>
           {preparedContent}
         </ReactMarkdown>
       </div>
     </div>
   );
 });
+
+export const Preview = memo(PreviewInner);

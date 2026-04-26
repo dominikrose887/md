@@ -12,7 +12,8 @@ export function createKatexSanitizeSchema(): Schema {
         'style',
         'ariaHidden',
         ['className', /^[\w\s-]+$/]
-      ]
+      ],
+      '*': [...(defaultSchema.attributes?.['*'] ?? []), 'dataMdStart', 'dataMdEnd']
     }
   };
 }
