@@ -65,6 +65,22 @@ const editor = {
 };
 \`\`\`
 
+## Math (LaTeX)
+
+Inline formulas use single dollar signs, for example $E = mc^2$ or $e^{i\\pi} + 1 = 0$.
+
+Display math uses double dollars:
+
+$$
+\\int_0^1 x^2 \\, dx = \\frac{1}{3}
+$$
+
+You can also use a fenced \`math\` code block:
+
+\`\`\`math
+\\sum_{n=1}^{\\infty} \\frac{1}{n^2} = \\frac{\\pi^2}{6}
+\`\`\`
+
 ## Blockquotes
 
 > This is a blockquote. It can contain multiple paragraphs and other markdown elements.

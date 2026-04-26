@@ -225,3 +225,14 @@
 .markdown-body del {
   text-decoration: line-through;
 }
+
+/* KaTeX: match preview text color in dark mode */
+.dark .markdown-body .katex {
+  color: var(--color-foreground);
+}
+
+.markdown-body .katex-display {
+  margin: 1rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}

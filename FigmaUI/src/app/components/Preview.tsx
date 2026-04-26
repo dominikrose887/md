@@ -1,10 +1,38 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import rehypeRaw from 'rehype-raw';
-import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
+import rehypeKatex from 'rehype-katex';
+import rehypeSanitize from 'rehype-sanitize';
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { createKatexSanitizeSchema } from '@/utils/katexSanitizeSchema';
+
+const KATEX_REHYPE_OPTIONS = { output: 'html' as const, throwOnError: false };
+
+function resolveFenceLanguage(className?: string) {
+  const match = /language-([\w#+-]+)/i.exec(className || '');
+  if (!match) {
+    return undefined;
+  }
+  const raw = match[1].toLowerCase();
+  const aliases: Record<string, string> = {
+    py: 'python',
+    python3: 'python',
+    js: 'javascript',
+    ts: 'typescript',
+    csharp: 'csharp',
+    'c#': 'csharp',
+    'c++': 'cpp',
+    sh: 'bash',
+    shell: 'bash',
+    yml: 'yaml'
+  };
+  return aliases[raw] ?? raw;
+}
 
 interface PreviewProps {
   content: string;
@@ -26,37 +54,16 @@ export const Preview = memo(function Preview({
 
   useMemo(() => resetScrollToken, [resetScrollToken]);
 
-  const sanitizeSchema = useMemo(
-    () => ({
-      ...defaultSchema,
+  const sanitizeSchema = useMemo(() => {
+    const base = createKatexSanitizeSchema();
+    return {
+      ...base,
       attributes: {
-        ...defaultSchema.attributes,
-        a: [...(defaultSchema.attributes?.a ?? []), 'id', 'name', 'target', 'rel']
+        ...base.attributes,
+        a: [...(base.attributes?.a ?? []), 'id', 'name', 'target', 'rel']
       }
-    }),
-    []
-  );
-
-  const resolveLanguage = (className?: string) => {
-    const match = /language-([\w#+-]+)/i.exec(className || '');
-    if (!match) {
-      return undefined;
-    }
-    const raw = match[1].toLowerCase();
-    const aliases: Record<string, string> = {
-      py: 'python',
-      python3: 'python',
-      js: 'javascript',
-      ts: 'typescript',
-      csharp: 'csharp',
-      'c#': 'csharp',
-      'c++': 'cpp',
-      sh: 'bash',
-      shell: 'bash',
-      yml: 'yaml'
     };
-    return aliases[raw] ?? raw;
-  };
+  }, []);
 
   const normalizeSlash = (value: string) => value.replace(/\\/g, '/');
 
@@ -110,9 +117,14 @@ export const Preview = memo(function Preview({
   }, [resetScrollToken]);
   const hasRawHtml = useMemo(() => /<[/a-zA-Z][^>]*>/.test(preparedContent), [preparedContent]);
   const rehypePlugins = useMemo(
-    () => (hasRawHtml ? [[rehypeRaw], [rehypeSanitize, sanitizeSchema]] : [[rehypeSanitize, sanitizeSchema]]),
+    () =>
+      hasRawHtml
+        ? [[rehypeRaw], [rehypeKatex, KATEX_REHYPE_OPTIONS], [rehypeSanitize, sanitizeSchema]]
+        : [[rehypeKatex, KATEX_REHYPE_OPTIONS], [rehypeSanitize, sanitizeSchema]],
     [hasRawHtml, sanitizeSchema]
   );
+
+  const remarkPlugins = useMemo(() => [remarkGfm, remarkMath], []);
 
   const markdownComponents = useMemo(
     () => ({
@@ -182,7 +194,16 @@ export const Preview = memo(function Preview({
         );
       },
       code({ inline, className, children, ...props }: any) {
-        const language = resolveLanguage(className);
+        const language = resolveFenceLanguage(className);
+        if (!inline && (language === 'math' || language === 'latex' || language === 'tex')) {
+          const text = String(children).replace(/\n$/, '');
+          const html = katex.renderToString(text, {
+            displayMode: true,
+            throwOnError: false,
+            output: 'html'
+          });
+          return <div className="katex-display overflow-x-auto my-4" dangerouslySetInnerHTML={{ __html: html }} />;
+        }
         return !inline && language ? (
           <SyntaxHighlighter
             style={theme === 'dark' ? oneDark : oneLight}
@@ -218,7 +239,7 @@ export const Preview = memo(function Preview({
     >
       <div className="markdown-body p-8 max-w-4xl mx-auto">
         <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
+          remarkPlugins={remarkPlugins}
           rehypePlugins={rehypePlugins as any}
           components={markdownComponents}
         >
