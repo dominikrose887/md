@@ -146,6 +146,49 @@ ipcMain.handle('mdstudio:get-launch-file', () => {
   return pendingLaunchFile || cliFile || null;
 });
 
+ipcMain.handle('mdstudio:confirm-save-before-pdf', async () => {
+  if (!mainWindow) {
+    return 2;
+  }
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    buttons: ['Save', "Don't save", 'Cancel'],
+    defaultId: 0,
+    cancelId: 2,
+    title: 'Export PDF',
+    message: 'Do you want to save the document before exporting to PDF?',
+    detail: 'The PDF will reflect saved content. Unsaved edits are only included if you save first.'
+  });
+  return response;
+});
+
+ipcMain.handle('mdstudio:export-pdf', async (_event, payload) => {
+  const suggestedFileName = (payload && payload.suggestedFileName) || 'document.pdf';
+  if (!mainWindow) {
+    return { canceled: true };
+  }
+  try {
+    const data = await mainWindow.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      marginsType: 0
+    });
+    const saveResult = await dialog.showSaveDialog(mainWindow, {
+      title: 'Export PDF',
+      defaultPath: suggestedFileName,
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    });
+    if (saveResult.canceled || !saveResult.filePath) {
+      return { canceled: true };
+    }
+    await fs.writeFile(saveResult.filePath, data);
+    return { canceled: false, path: saveResult.filePath };
+  } catch (err) {
+    console.error('mdstudio:export-pdf', err);
+    return { canceled: true, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
 const singleInstance = app.requestSingleInstanceLock();
 if (!singleInstance) {
   app.quit();

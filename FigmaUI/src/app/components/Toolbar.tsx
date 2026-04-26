@@ -1,16 +1,4 @@
-import {
-  FolderOpen,
-  Save,
-  Moon,
-  Sun,
-  Columns2,
-  FileEdit,
-  Eye,
-  Search,
-  Minimize2,
-  Maximize2,
-  X
-} from 'lucide-react';
+import { FolderOpen, Save, Moon, Sun, Columns2, FileEdit, Eye, Search, FileDown } from 'lucide-react';
 
 interface ToolbarProps {
   theme: 'light' | 'dark';
@@ -20,6 +8,7 @@ interface ToolbarProps {
   onOpen: () => void | Promise<void>;
   onSave: () => void | Promise<void>;
   onSaveAs: () => void | Promise<void>;
+  onExportPdf: () => void | Promise<void>;
   hasUnsavedChanges: boolean;
   fileName: string;
   findOpen: boolean;
@@ -34,6 +23,7 @@ export function Toolbar({
   onOpen,
   onSave,
   onSaveAs,
+  onExportPdf,
   hasUnsavedChanges,
   fileName,
   findOpen,
@@ -73,6 +63,17 @@ export function Toolbar({
             title="Save As (Ctrl+Shift+S)"
           >
             Save As
+          </button>
+          <button
+            type="button"
+            onClick={() => void onExportPdf()}
+            className="px-2 sm:px-3 py-1.5 rounded hover:bg-accent transition-colors flex items-center gap-1.5 disabled:opacity-50"
+            disabled={!fileName}
+            title="Export preview to PDF (desktop)"
+            aria-label="Export to PDF"
+          >
+            <FileDown className="w-4 h-4" aria-hidden />
+            <span className="text-sm hidden lg:inline">PDF</span>
           </button>
         </div>
       </div>
@@ -134,19 +135,6 @@ export function Toolbar({
           {fileName || 'No file open'}
         </div>
 
-        <div className="h-6 w-px bg-border hidden md:block" />
-
-        <div className="hidden md:flex items-center gap-1">
-          <button className="p-1.5 rounded hover:bg-accent transition-colors" title="Minimize">
-            <Minimize2 className="w-4 h-4" />
-          </button>
-          <button className="p-1.5 rounded hover:bg-accent transition-colors" title="Maximize">
-            <Maximize2 className="w-4 h-4" />
-          </button>
-          <button className="p-1.5 rounded hover:bg-destructive hover:text-destructive-foreground transition-colors" title="Close">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
       </div>
     </div>
   );

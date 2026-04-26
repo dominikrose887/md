@@ -9,12 +9,13 @@ import { ErrorState } from './components/ErrorState';
 import { SAMPLE_MARKDOWN } from './components/SampleContent';
 import { toast } from 'sonner';
 import { Toaster } from './components/ui/sonner';
+import { suggestedPdfFileName } from '@/utils/pdf';
 
 type FsHandle = FileSystemFileHandle | null;
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
-  const [viewMode, setViewMode] = useState<'split' | 'editor' | 'preview'>('split');
+  const [viewMode, setViewMode] = useState<'split' | 'editor' | 'preview'>('preview');
   const [content, setContent] = useState('');
   const [fileName, setFileName] = useState('');
   const [filePath, setFilePath] = useState('');
@@ -248,10 +249,10 @@ export default function App() {
     return content;
   };
 
-  const handleSave = async () => {
+  const handleSave = async (): Promise<boolean> => {
     if (!fileName) {
       toast.error('No file to save');
-      return;
+      return false;
     }
 
     try {
@@ -271,8 +272,9 @@ export default function App() {
           setSavedContent(content);
           setHasUnsavedChanges(false);
           toast.success('File saved successfully');
+          return true;
         }
-        return;
+        return false;
       }
 
       if (fileHandleRef.current) {
@@ -282,7 +284,7 @@ export default function App() {
         setSavedContent(content);
         setHasUnsavedChanges(false);
         toast.success('File saved successfully');
-        return;
+        return true;
       }
 
       const blob = new Blob([data], { type: 'text/markdown;charset=utf-8' });
@@ -298,10 +300,12 @@ export default function App() {
       setSavedContent(content);
       setHasUnsavedChanges(false);
       toast.success('File downloaded (browser fallback)');
+      return true;
     } catch {
       setShowError(true);
       setErrorMessage('Failed to save file');
       toast.error('Failed to save file');
+      return false;
     }
   };
 
@@ -461,6 +465,54 @@ export default function App() {
     applyOpenedFile('sample-document.md', 'sample-document.md', SAMPLE_MARKDOWN);
   };
 
+  const handleExportPdf = async () => {
+    if (!fileName) {
+      toast.error('Open a document before exporting to PDF');
+      return;
+    }
+
+    const mdStudioApi = window.mdStudio;
+    if (!mdStudioApi?.exportPdf || !mdStudioApi.confirmSaveBeforePdf) {
+      toast.error('PDF export is available in the desktop app');
+      return;
+    }
+
+    if (hasUnsavedChanges) {
+      const response = await mdStudioApi.confirmSaveBeforePdf();
+      if (response === 2) {
+        return;
+      }
+      if (response === 0) {
+        const saved = await handleSave();
+        if (!saved) {
+          toast.info('PDF export canceled');
+          return;
+        }
+      }
+    }
+
+    document.documentElement.classList.add('md-studio-printing-pdf');
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+
+    try {
+      const suggested = suggestedPdfFileName(fileName);
+      const result = await mdStudioApi.exportPdf({ suggestedFileName: suggested });
+      if (result.canceled) {
+        if (result.error) {
+          toast.error(result.error);
+        }
+        return;
+      }
+      if (result.path) {
+        toast.success(`PDF exported: ${result.path}`);
+      }
+    } finally {
+      document.documentElement.classList.remove('md-studio-printing-pdf');
+    }
+  };
+
   const handleFileInputChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) {
@@ -497,6 +549,7 @@ export default function App() {
         onOpen={handleOpen}
         onSave={handleSave}
         onSaveAs={handleSaveAs}
+        onExportPdf={handleExportPdf}
         hasUnsavedChanges={hasUnsavedChanges}
         fileName={fileName}
         findOpen={findOpen}
@@ -609,10 +662,26 @@ export default function App() {
                   theme={theme}
                   filePath={filePath}
                   resetScrollToken={resetScrollToken}
+                  assignPdfPrintRootId
                 />
               </Panel>
             )}
           </PanelGroup>
+        )}
+
+        {fileName && viewMode === 'editor' && (
+          <div
+            className="fixed -left-[10000px] top-0 h-[1200px] w-[1024px] overflow-hidden opacity-0 pointer-events-none"
+            aria-hidden
+          >
+            <Preview
+              content={deferredContent}
+              theme={theme}
+              filePath={filePath}
+              resetScrollToken={resetScrollToken}
+              assignPdfPrintRootId
+            />
+          </div>
         )}
       </div>
 

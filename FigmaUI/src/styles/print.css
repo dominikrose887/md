@@ -1,0 +1,30 @@
+/* Used by Electron printToPDF — only the markdown preview region is visible. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  #md-studio-pdf-print-root,
+  #md-studio-pdf-print-root * {
+    visibility: visible;
+  }
+
+  #md-studio-pdf-print-root {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    max-width: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+    color: #24292f !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  #md-studio-pdf-print-root .markdown-body {
+    max-width: none !important;
+  }
+}

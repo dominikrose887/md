@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('mdStudio', {
   saveFile: (payload) => ipcRenderer.invoke('mdstudio:save-file', payload),
   readFile: (filePath) => ipcRenderer.invoke('mdstudio:read-file', filePath),
   getLaunchFile: () => ipcRenderer.invoke('mdstudio:get-launch-file'),
+  confirmSaveBeforePdf: () => ipcRenderer.invoke('mdstudio:confirm-save-before-pdf'),
+  exportPdf: (payload) => ipcRenderer.invoke('mdstudio:export-pdf', payload),
   onOpenFilePath: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('mdstudio:open-file-path', listener);

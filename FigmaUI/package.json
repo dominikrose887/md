@@ -16,7 +16,9 @@
     "build:installer": "npm run build && electron-builder --win nsis --x64",
     "build:portable": "npm run build && electron-builder --win portable --x64",
     "build:release": "npm run build && electron-builder --win nsis portable --x64",
-    "release:github": "powershell -ExecutionPolicy Bypass -File ./build-github-release.ps1"
+    "release:github": "powershell -ExecutionPolicy Bypass -File ./build-github-release.ps1",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "main": "electron/main.cjs",
   "dependencies": {
@@ -93,6 +95,11 @@
     "electron-builder": "^26.0.12",
     "tailwindcss": "4.1.12",
     "vite": "6.3.5",
+    "vitest": "^3.2.4",
+    "jsdom": "^26.1.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
     "wait-on": "^8.0.5"
   },
   "build": {

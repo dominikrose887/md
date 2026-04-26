@@ -11,9 +11,17 @@ interface PreviewProps {
   theme: 'light' | 'dark';
   filePath?: string;
   resetScrollToken?: number;
+  /** When true, outer scroll container gets id used for Electron printToPDF capture. */
+  assignPdfPrintRootId?: boolean;
 }
 
-export const Preview = memo(function Preview({ content, theme, filePath, resetScrollToken }: PreviewProps) {
+export const Preview = memo(function Preview({
+  content,
+  theme,
+  filePath,
+  resetScrollToken,
+  assignPdfPrintRootId
+}: PreviewProps) {
   const previewContainerRef = useRef<HTMLDivElement>(null);
 
   useMemo(() => resetScrollToken, [resetScrollToken]);
@@ -203,7 +211,11 @@ export const Preview = memo(function Preview({ content, theme, filePath, resetSc
   );
 
   return (
-    <div ref={previewContainerRef} className="h-full min-h-0 overflow-y-auto bg-background">
+    <div
+      ref={previewContainerRef}
+      id={assignPdfPrintRootId ? 'md-studio-pdf-print-root' : undefined}
+      className="h-full min-h-0 overflow-y-auto bg-background"
+    >
       <div className="markdown-body p-8 max-w-4xl mx-auto">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
