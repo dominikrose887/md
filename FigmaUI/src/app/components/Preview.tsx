@@ -1,5 +1,6 @@
 import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import type { ReactNode } from 'react';
+import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -10,14 +11,15 @@ import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { createKatexSanitizeSchema } from '@/utils/katexSanitizeSchema';
-import { rehypeSourceOffsets } from '@/utils/rehypeSourceOffsets';
+import { createKatexSanitizeSchema } from '../../utils/katexSanitizeSchema';
+import { rehypeSourceOffsets } from '../../utils/rehypeSourceOffsets';
 import {
   findElementForSourceOffset,
   readDataMdStart,
   sourceOffsetContentToPrepared,
   sourceOffsetPreparedToContent
-} from '@/utils/sourceOffsetSync';
+} from '../../utils/sourceOffsetSync';
+import type { FindOptions } from './Editor';
 
 const KATEX_REHYPE_OPTIONS = { output: 'html' as const, throwOnError: false };
 
@@ -73,6 +75,9 @@ function wrapFenceForSourceSync(inner: ReactNode, props: Record<string, unknown>
 
 export interface PreviewHandle {
   scrollToSourceOffset: (offset: number) => void;
+  scrollToSearchMatch: (index: number) => void;
+  getScrollTop: () => number;
+  setScrollTop: (value: number) => void;
 }
 
 export interface PreviewProps {
@@ -85,6 +90,10 @@ export interface PreviewProps {
   /** Split view: clicking preview maps back to the raw editor by source offset. */
   splitPaneSync?: boolean;
   onSplitPanePreviewNavigate?: (sourceOffset: number) => void;
+  findOpen?: boolean;
+  searchQuery?: string;
+  searchOptions?: FindOptions;
+  currentMatchIndex?: number;
 }
 
 const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInner(
@@ -95,11 +104,16 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
     resetScrollToken,
     assignPdfPrintRootId,
     splitPaneSync,
-    onSplitPanePreviewNavigate
+    onSplitPanePreviewNavigate,
+    findOpen = false,
+    searchQuery = '',
+    searchOptions,
+    currentMatchIndex = -1
   },
   ref
 ) {
   const previewContainerRef = useRef<HTMLDivElement>(null);
+  const highlightedMatchesRef = useRef<HTMLElement[]>([]);
 
   const sanitizeSchema = useMemo(() => {
     const base = createKatexSanitizeSchema();
@@ -117,6 +131,41 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
   const toFileUrl = (absolutePath: string) => {
     const normalized = normalizeSlash(absolutePath);
     return normalized.startsWith('/') ? `file://${normalized}` : `file:///${normalized}`;
+  };
+
+  /** GitHub-style sanitize prefixes `id` / `name` (see hast-util-sanitize clobberPrefix). */
+  const SANITIZE_ID_PREFIX = 'user-content-';
+
+  const findElementForHashFragment = (root: HTMLElement, fragment: string): Element | null => {
+    const decoded = decodeURIComponent(fragment).trim();
+    if (!decoded) {
+      return null;
+    }
+    const idsToTry = decoded.startsWith(SANITIZE_ID_PREFIX)
+      ? [decoded]
+      : [decoded, `${SANITIZE_ID_PREFIX}${decoded}`];
+
+    for (const id of idsToTry) {
+      try {
+        const byId = root.querySelector(`#${window.CSS?.escape ? window.CSS.escape(id) : id}`);
+        if (byId) {
+          return byId;
+        }
+      } catch {
+        /* invalid selector */
+      }
+    }
+
+    const named = root.querySelectorAll('[name]');
+    for (const id of idsToTry) {
+      for (const el of named) {
+        if (el.getAttribute('name') === id) {
+          return el;
+        }
+      }
+    }
+
+    return null;
   };
 
   const resolveRelativePath = (baseFilePath: string, relativePath: string) => {
@@ -163,6 +212,131 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
     }
   }, [resetScrollToken]);
 
+  const buildSearchRegex = (query: string, options?: FindOptions): RegExp | null => {
+    if (!query.trim()) {
+      return null;
+    }
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const source = options?.useRegex ? query : escaped;
+    const pattern = options?.wholeWord ? `\\b${source}\\b` : source;
+    const flags = options?.caseSensitive ? 'g' : 'gi';
+    try {
+      return new RegExp(pattern, flags);
+    } catch {
+      return null;
+    }
+  };
+
+  const clearSearchHighlights = () => {
+    const root = previewContainerRef.current?.querySelector('.markdown-body');
+    if (!root) {
+      highlightedMatchesRef.current = [];
+      return;
+    }
+    const marks = root.querySelectorAll('mark[data-md-search-highlight="1"]');
+    for (const mark of marks) {
+      const parent = mark.parentNode;
+      if (!parent) {
+        continue;
+      }
+      parent.replaceChild(document.createTextNode(mark.textContent || ''), mark);
+      parent.normalize();
+    }
+    highlightedMatchesRef.current = [];
+  };
+
+  const syncActiveSearchHighlight = (activeIndex: number) => {
+    const all = highlightedMatchesRef.current;
+    for (let i = 0; i < all.length; i += 1) {
+      const el = all[i];
+      if (i === activeIndex) {
+        el.className = 'rounded bg-orange-300/70 dark:bg-orange-500/45';
+      } else {
+        el.className = 'rounded bg-yellow-300/65 dark:bg-yellow-500/35';
+      }
+    }
+  };
+
+  const applySearchHighlights = () => {
+    clearSearchHighlights();
+    if (!findOpen || !searchQuery.trim()) {
+      return;
+    }
+    const root = previewContainerRef.current?.querySelector('.markdown-body');
+    if (!root) {
+      return;
+    }
+    const regex = buildSearchRegex(searchQuery, searchOptions);
+    if (!regex) {
+      return;
+    }
+
+    const textNodes: Text[] = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (!node.nodeValue || !node.nodeValue.trim()) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        const parent = (node as Text).parentElement;
+        if (!parent) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        if (parent.closest('pre, code, script, style, textarea, input, button')) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+
+    let currentNode = walker.nextNode();
+    while (currentNode) {
+      textNodes.push(currentNode as Text);
+      currentNode = walker.nextNode();
+    }
+
+    let globalIndex = 0;
+    const matchElements: HTMLElement[] = [];
+    for (const node of textNodes) {
+      const text = node.nodeValue || '';
+      regex.lastIndex = 0;
+      let last = 0;
+      let matched = false;
+      const fragment = document.createDocumentFragment();
+      let result = regex.exec(text);
+      while (result) {
+        const matchText = result[0] || '';
+        const start = result.index;
+        const end = start + matchText.length;
+        if (start > last) {
+          fragment.appendChild(document.createTextNode(text.slice(last, start)));
+        }
+        const mark = document.createElement('mark');
+        mark.dataset.mdSearchHighlight = '1';
+        mark.dataset.matchIndex = String(globalIndex);
+        mark.textContent = matchText;
+        fragment.appendChild(mark);
+        matchElements.push(mark);
+        globalIndex += 1;
+        matched = true;
+        last = end;
+        if (matchText.length === 0) {
+          regex.lastIndex += 1;
+        }
+        result = regex.exec(text);
+      }
+      if (!matched) {
+        continue;
+      }
+      if (last < text.length) {
+        fragment.appendChild(document.createTextNode(text.slice(last)));
+      }
+      node.parentNode?.replaceChild(fragment, node);
+    }
+
+    highlightedMatchesRef.current = matchElements;
+    syncActiveSearchHighlight(currentMatchIndex);
+  };
+
   useImperativeHandle(
     ref,
     () => ({
@@ -176,10 +350,38 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
         if (el) {
           el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
+      },
+      scrollToSearchMatch(index: number) {
+        if (index < 0) {
+          return;
+        }
+        const target = highlightedMatchesRef.current[index];
+        if (!target) {
+          return;
+        }
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      },
+      getScrollTop() {
+        return previewContainerRef.current?.scrollTop ?? 0;
+      },
+      setScrollTop(value: number) {
+        const root = previewContainerRef.current;
+        if (!root) {
+          return;
+        }
+        root.scrollTop = Math.max(0, value);
       }
     }),
     [content]
   );
+
+  useEffect(() => {
+    applySearchHighlights();
+  }, [content, currentMatchIndex, findOpen, searchOptions, searchQuery]);
+
+  useEffect(() => {
+    syncActiveSearchHighlight(currentMatchIndex);
+  }, [currentMatchIndex]);
 
   const hasRawHtml = useMemo(() => /<[/a-zA-Z][^>]*>/.test(preparedContent), [preparedContent]);
   const rehypePlugins = useMemo(
@@ -278,12 +480,8 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
               if (!container) {
                 return;
               }
-              const targetId = decodeURIComponent(href.slice(1));
-              if (!targetId) {
-                return;
-              }
-              const escapedId = window.CSS?.escape ? window.CSS.escape(targetId) : targetId;
-              const targetElement = container.querySelector(`[id="${escapedId}"], [name="${escapedId}"]`);
+              const fragment = href.slice(1);
+              const targetElement = findElementForHashFragment(container, fragment);
               if (!targetElement) {
                 return;
               }

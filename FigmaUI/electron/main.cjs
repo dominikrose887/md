@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, screen } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 
@@ -7,6 +7,78 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173';
 
 let mainWindow = null;
 let pendingLaunchFile = null;
+let saveWindowStateTimer = null;
+const WINDOW_STATE_FILE = 'window-state.json';
+const DEFAULT_WINDOW_BOUNDS = { width: 1400, height: 900 };
+
+function getWindowStateFilePath() {
+  return path.join(app.getPath('userData'), WINDOW_STATE_FILE);
+}
+
+function isNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isValidBounds(bounds) {
+  return !!bounds
+    && isNumber(bounds.width)
+    && isNumber(bounds.height)
+    && isNumber(bounds.x)
+    && isNumber(bounds.y)
+    && bounds.width >= 960
+    && bounds.height >= 640;
+}
+
+function isBoundsVisible(bounds) {
+  const pointToCheck = {
+    x: bounds.x + Math.floor(bounds.width / 2),
+    y: bounds.y + Math.floor(bounds.height / 2)
+  };
+  return !!screen.getDisplayNearestPoint(pointToCheck);
+}
+
+async function readWindowState() {
+  try {
+    const raw = await fs.readFile(getWindowStateFilePath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!isValidBounds(parsed.bounds) || !isBoundsVisible(parsed.bounds)) {
+      return null;
+    }
+    return {
+      bounds: parsed.bounds,
+      isMaximized: Boolean(parsed.isMaximized),
+      isFullScreen: Boolean(parsed.isFullScreen)
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeWindowState(win) {
+  if (!win || win.isDestroyed()) {
+    return;
+  }
+  const state = {
+    bounds: win.isMaximized() || win.isFullScreen() ? win.getNormalBounds() : win.getBounds(),
+    isMaximized: win.isMaximized(),
+    isFullScreen: win.isFullScreen()
+  };
+  try {
+    await fs.writeFile(getWindowStateFilePath(), JSON.stringify(state, null, 2), 'utf8');
+  } catch (err) {
+    console.error('mdstudio:save-window-state', err);
+  }
+}
+
+function scheduleWindowStateSave(win) {
+  if (saveWindowStateTimer) {
+    clearTimeout(saveWindowStateTimer);
+  }
+  saveWindowStateTimer = setTimeout(() => {
+    saveWindowStateTimer = null;
+    void writeWindowState(win);
+  }, 200);
+}
 
 function isMarkdownPath(value) {
   if (!value) {
@@ -36,9 +108,13 @@ async function readMarkdownFile(filePath) {
 }
 
 async function createWindow() {
+  const savedState = await readWindowState();
+  const initialBounds = savedState?.bounds ?? DEFAULT_WINDOW_BOUNDS;
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: initialBounds.width,
+    height: initialBounds.height,
+    x: savedState?.bounds?.x,
+    y: savedState?.bounds?.y,
     minWidth: 960,
     minHeight: 640,
     autoHideMenuBar: true,
@@ -56,6 +132,22 @@ async function createWindow() {
     await mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'renderer', 'index.html'));
   }
 
+  if (savedState?.isMaximized) {
+    mainWindow.maximize();
+  }
+  if (savedState?.isFullScreen) {
+    mainWindow.setFullScreen(true);
+  }
+
+  mainWindow.on('resize', () => scheduleWindowStateSave(mainWindow));
+  mainWindow.on('move', () => scheduleWindowStateSave(mainWindow));
+  mainWindow.on('maximize', () => scheduleWindowStateSave(mainWindow));
+  mainWindow.on('unmaximize', () => scheduleWindowStateSave(mainWindow));
+  mainWindow.on('enter-full-screen', () => scheduleWindowStateSave(mainWindow));
+  mainWindow.on('leave-full-screen', () => scheduleWindowStateSave(mainWindow));
+  mainWindow.on('close', () => {
+    void writeWindowState(mainWindow);
+  });
   mainWindow.on('closed', () => {
     mainWindow = null;
   });

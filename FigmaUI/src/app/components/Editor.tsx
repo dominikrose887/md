@@ -1,4 +1,5 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 
 interface EditorProps {
   value: string;
@@ -9,6 +10,10 @@ interface EditorProps {
   /** When set, clicking the editor reports the caret byte offset for split-pane preview sync. */
   splitPaneSync?: boolean;
   onSplitPaneSourceNavigate?: (sourceOffset: number) => void;
+  findOpen?: boolean;
+  searchQuery?: string;
+  searchOptions?: FindOptions;
+  currentMatchIndex?: number;
 }
 
 export interface FindOptions {
@@ -35,15 +40,43 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
   showLineNumbers = true,
   resetScrollToken,
   splitPaneSync,
-  onSplitPaneSourceNavigate
+  onSplitPaneSourceNavigate,
+  findOpen = false,
+  searchQuery = '',
+  searchOptions,
+  currentMatchIndex = -1
 }, ref) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const matchCacheRef = useRef<{
+    key: string;
+    matches: Array<{ index: number; length: number }>;
+  } | null>(null);
+  const EDITOR_LINE_HEIGHT = 21;
+  const LINE_OVERSCAN = 50;
 
   useEffect(() => {
     if (lineNumbersRef.current && textareaRef.current) {
       lineNumbersRef.current.scrollTop = textareaRef.current.scrollTop;
     }
+  }, []);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    const updateHeight = () => setViewportHeight(textarea.clientHeight);
+    updateHeight();
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(updateHeight);
+      observer.observe(textarea);
+      return () => observer.disconnect();
+    }
+    window.addEventListener('resize', updateHeight);
+    return () => window.removeEventListener('resize', updateHeight);
   }, []);
 
   useEffect(() => {
@@ -60,20 +93,109 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
     if (lineNumbersRef.current && textareaRef.current) {
       const textarea = textareaRef.current;
       lineNumbersRef.current.scrollTop = textarea.scrollTop;
+      setScrollTop(textarea.scrollTop);
+      setViewportHeight(textarea.clientHeight);
     }
   };
 
   const getCursorPosition = (text: string, selectionStart: number) => {
-    const beforeCursor = text.slice(0, selectionStart);
-    const lines = beforeCursor.split('\n');
+    let line = 1;
+    let lastLineStart = 0;
+    const end = Math.max(0, Math.min(selectionStart, text.length));
+    for (let i = 0; i < end; i += 1) {
+      if (text.charCodeAt(i) === 10) {
+        line += 1;
+        lastLineStart = i + 1;
+      }
+    }
     return {
-      line: lines.length,
-      col: (lines[lines.length - 1]?.length ?? 0) + 1
+      line,
+      col: end - lastLineStart + 1
     };
   };
 
-  const lineCount = value.split('\n').length;
-  const lineNumbers = Array.from({ length: lineCount }, (_, i) => i + 1);
+  const lineCount = useMemo(() => {
+    if (!value) {
+      return 1;
+    }
+    let count = 1;
+    for (let i = 0; i < value.length; i += 1) {
+      if (value.charCodeAt(i) === 10) {
+        count += 1;
+      }
+    }
+    return count;
+  }, [value]);
+
+  const virtualLineRange = useMemo(() => {
+    const visibleLines = Math.max(1, Math.ceil((viewportHeight || 1) / EDITOR_LINE_HEIGHT));
+    const start = Math.max(0, Math.floor(scrollTop / EDITOR_LINE_HEIGHT) - LINE_OVERSCAN);
+    const end = Math.min(lineCount, start + visibleLines + (LINE_OVERSCAN * 2));
+    return { start, end };
+  }, [lineCount, scrollTop, viewportHeight]);
+
+  const renderedLineNumbers = useMemo(() => {
+    const nums: number[] = [];
+    for (let i = virtualLineRange.start + 1; i <= virtualLineRange.end; i += 1) {
+      nums.push(i);
+    }
+    return nums;
+  }, [virtualLineRange.end, virtualLineRange.start]);
+
+  const searchMatches = useMemo(() => {
+    if (!findOpen || !searchQuery.trim()) {
+      return [] as Array<{ index: number; length: number }>;
+    }
+    const escaped = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const source = searchOptions?.useRegex ? searchQuery : escaped;
+    const pattern = searchOptions?.wholeWord ? `\\b${source}\\b` : source;
+    const flags = searchOptions?.caseSensitive ? 'g' : 'gi';
+    let regex: RegExp;
+    try {
+      regex = new RegExp(pattern, flags);
+    } catch {
+      return [] as Array<{ index: number; length: number }>;
+    }
+    const matches: Array<{ index: number; length: number }> = [];
+    let result: RegExpExecArray | null;
+    while ((result = regex.exec(value)) !== null) {
+      const length = result[0]?.length ?? 0;
+      if (length <= 0) {
+        regex.lastIndex += 1;
+        continue;
+      }
+      matches.push({ index: result.index, length });
+    }
+    return matches;
+  }, [findOpen, searchOptions, searchQuery, value]);
+
+  const highlightedEditorContent = useMemo(() => {
+    if (!findOpen || !searchMatches.length) {
+      return value;
+    }
+    const out: Array<string | ReactNode> = [];
+    let cursor = 0;
+    for (let i = 0; i < searchMatches.length; i += 1) {
+      const match = searchMatches[i];
+      if (match.index > cursor) {
+        out.push(value.slice(cursor, match.index));
+      }
+      const text = value.slice(match.index, match.index + match.length);
+      out.push(
+        <mark
+          key={`${match.index}:${match.length}:${i}`}
+          className={i === currentMatchIndex ? 'bg-orange-300/70 dark:bg-orange-500/45' : 'bg-yellow-300/65 dark:bg-yellow-500/35'}
+        >
+          {text}
+        </mark>
+      );
+      cursor = match.index + match.length;
+    }
+    if (cursor < value.length) {
+      out.push(value.slice(cursor));
+    }
+    return out;
+  }, [currentMatchIndex, findOpen, searchMatches, value]);
 
   const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -100,8 +222,19 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
     if (!regex) {
       return [];
     }
-    const matches: Array<{ index: number; length: number }> = [];
     const content = textarea.value;
+    const cacheKey = [
+      content,
+      query,
+      options?.caseSensitive ? '1' : '0',
+      options?.useRegex ? '1' : '0',
+      options?.wholeWord ? '1' : '0'
+    ].join('\u0000');
+    if (matchCacheRef.current?.key === cacheKey) {
+      return matchCacheRef.current.matches;
+    }
+
+    const matches: Array<{ index: number; length: number }> = [];
     let result: RegExpExecArray | null;
     while ((result = regex.exec(content)) !== null) {
       const length = result[0]?.length ?? 0;
@@ -111,6 +244,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
       }
       matches.push({ index: result.index, length });
     }
+    matchCacheRef.current = { key: cacheKey, matches };
     return matches;
   };
 
@@ -120,12 +254,19 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
       return;
     }
     const style = window.getComputedStyle(textarea);
-    const lineHeight = Number.parseFloat(style.lineHeight) || 21;
-    const before = textarea.value.slice(0, start);
-    const lineIndex = Math.max(0, before.split('\n').length - 1);
+    const lineHeight = Number.parseFloat(style.lineHeight) || EDITOR_LINE_HEIGHT;
+    let lineIndex = 0;
+    const safeStart = Math.max(0, Math.min(start, textarea.value.length));
+    for (let i = 0; i < safeStart; i += 1) {
+      if (textarea.value.charCodeAt(i) === 10) {
+        lineIndex += 1;
+      }
+    }
     const targetTop = lineIndex * lineHeight - (textarea.clientHeight * 0.35);
     const maxTop = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
     textarea.scrollTop = Math.max(0, Math.min(maxTop, targetTop));
+    setScrollTop(textarea.scrollTop);
+    setViewportHeight(textarea.clientHeight);
     if (lineNumbersRef.current) {
       lineNumbersRef.current.scrollTop = textarea.scrollTop;
     }
@@ -142,7 +283,6 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
         return false;
       }
       const first = matches[0];
-      textarea.focus();
       textarea.setSelectionRange(first.index, first.index + first.length);
       moveViewportToSelection(first.index);
       onCursorPositionChange?.(getCursorPosition(textarea.value, first.index));
@@ -161,7 +301,6 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
       const fromIndex = textarea.selectionEnd;
       const next = matches.find((match) => match.index >= fromIndex) ?? matches[0];
 
-      textarea.focus();
       textarea.setSelectionRange(next.index, next.index + next.length);
       moveViewportToSelection(next.index);
       onCursorPositionChange?.(getCursorPosition(textarea.value, next.index));
@@ -178,9 +317,14 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
         return false;
       }
       const fromIndex = Math.max(0, textarea.selectionStart - 1);
-      const previous = [...matches].reverse().find((match) => match.index <= fromIndex) ?? matches[matches.length - 1];
+      let previous = matches[matches.length - 1];
+      for (let i = matches.length - 1; i >= 0; i -= 1) {
+        if (matches[i].index <= fromIndex) {
+          previous = matches[i];
+          break;
+        }
+      }
 
-      textarea.focus();
       textarea.setSelectionRange(previous.index, previous.index + previous.length);
       moveViewportToSelection(previous.index);
       onCursorPositionChange?.(getCursorPosition(textarea.value, previous.index));
@@ -284,7 +428,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
   }), [onChange, onCursorPositionChange]);
 
   return (
-    <div className="h-full min-h-0 flex-1 flex overflow-hidden bg-background">
+    <div className="relative h-full min-h-0 flex-1 flex overflow-hidden bg-background">
       {showLineNumbers && (
         <div
           ref={lineNumbersRef}
@@ -296,11 +440,22 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
             color: 'var(--color-muted-foreground)'
           }}
         >
-          {lineNumbers.map(num => (
-            <div key={num} style={{ height: '21px' }}>
-              {num}
+          <div style={{ height: `${lineCount * EDITOR_LINE_HEIGHT}px`, position: 'relative' }}>
+            <div
+              style={{
+                position: 'absolute',
+                top: `${virtualLineRange.start * EDITOR_LINE_HEIGHT}px`,
+                left: 0,
+                right: 0
+              }}
+            >
+              {renderedLineNumbers.map((num) => (
+                <div key={num} style={{ height: `${EDITOR_LINE_HEIGHT}px` }}>
+                  {num}
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
       )}
       <textarea
@@ -336,7 +491,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
           onCursorPositionChange?.(getCursorPosition(target.value, target.selectionStart));
         }}
         onScroll={handleScroll}
-        className="h-full min-h-0 flex-1 overflow-y-auto p-4 bg-background text-foreground outline-none resize-none"
+        className="relative z-10 h-full min-h-0 flex-1 overflow-y-auto p-4 bg-transparent text-foreground outline-none resize-none"
         style={{
           fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
           fontSize: '14px',
@@ -346,6 +501,25 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
         spellCheck={false}
         placeholder="Start typing your markdown here..."
       />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 right-0 z-0 overflow-hidden"
+        style={{ left: showLineNumbers ? '48px' : '0px' }}
+      >
+        <pre
+          className="m-0 h-full min-h-0 overflow-hidden p-4 whitespace-pre-wrap break-words"
+          style={{
+            fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+            fontSize: '14px',
+            lineHeight: '1.5',
+            tabSize: 2,
+            color: 'transparent',
+            transform: `translateY(-${scrollTop}px)`
+          }}
+        >
+          {highlightedEditorContent}
+        </pre>
+      </div>
     </div>
   );
 });

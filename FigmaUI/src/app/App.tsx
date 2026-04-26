@@ -10,6 +10,7 @@ import { SAMPLE_MARKDOWN } from './components/SampleContent';
 import { toast } from 'sonner';
 import { Toaster } from './components/ui/sonner';
 import { suggestedPdfFileName } from '@/utils/pdf';
+import { X } from 'lucide-react';
 
 type FsHandle = FileSystemFileHandle | null;
 
@@ -32,13 +33,18 @@ export default function App() {
   const [useRegexFind, setUseRegexFind] = useState(false);
   const [wholeWordFind, setWholeWordFind] = useState(false);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
+  const [findFocusToken, setFindFocusToken] = useState(0);
   const [resetScrollToken, setResetScrollToken] = useState(0);
   const fileHandleRef = useRef<FsHandle>(null);
   const nativeFilePathRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<EditorHandle>(null);
   const previewRef = useRef<PreviewHandle>(null);
+  const findInputRef = useRef<HTMLInputElement>(null);
   const deferredContent = useDeferredValue(content);
+  const deferredFindQuery = useDeferredValue(findQuery);
+  const trimmedFindQuery = findQuery.trim();
+  const deferredTrimmedFindQuery = deferredFindQuery.trim();
   const findOptions: FindOptions = useMemo(
     () => ({
       caseSensitive: caseSensitiveFind,
@@ -49,11 +55,15 @@ export default function App() {
   );
 
   const totalMatches = useMemo(() => {
-    if (!findQuery.trim()) {
+    if (!deferredTrimmedFindQuery) {
       return 0;
     }
+    const editorMatches = editorRef.current?.countMatches(deferredFindQuery, findOptions);
+    if (typeof editorMatches === 'number') {
+      return editorMatches;
+    }
     const options = findOptions;
-    const source = options.useRegex ? findQuery : findQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const source = options.useRegex ? deferredFindQuery : deferredFindQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const pattern = options.wholeWord ? `\\b${source}\\b` : source;
     const flags = options.caseSensitive ? 'g' : 'gi';
     try {
@@ -62,15 +72,40 @@ export default function App() {
     } catch {
       return 0;
     }
-  }, [content, findOptions, findQuery]);
+  }, [content, deferredFindQuery, deferredTrimmedFindQuery, findOptions]);
 
   useEffect(() => {
-    if (!findOpen || !findQuery.trim()) {
+    if (!findOpen || !trimmedFindQuery) {
       setCurrentMatchIndex(-1);
       return;
     }
+    if (!editorRef.current) {
+      return;
+    }
     setCurrentMatchIndex(editorRef.current?.getCurrentMatchIndex(findQuery, findOptions) ?? -1);
-  }, [cursorPosition, findOpen, findQuery, findOptions]);
+  }, [cursorPosition, findOpen, findOptions, findQuery, trimmedFindQuery]);
+
+  useEffect(() => {
+    if (!findOpen || !trimmedFindQuery || currentMatchIndex < 0) {
+      return;
+    }
+    previewRef.current?.scrollToSearchMatch(currentMatchIndex);
+  }, [currentMatchIndex, findOpen, trimmedFindQuery]);
+
+  useEffect(() => {
+    if (!findOpen) {
+      return;
+    }
+    findInputRef.current?.focus();
+    findInputRef.current?.select();
+  }, [findOpen, findFocusToken]);
+
+  useEffect(() => {
+    if (!findOpen || !fileName || viewMode !== 'preview') {
+      return;
+    }
+    setFindOpen(false);
+  }, [fileName, findOpen, viewMode]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -139,6 +174,7 @@ export default function App() {
       if (event.key.toLowerCase() === 'f') {
         event.preventDefault();
         setFindOpen(true);
+        setFindFocusToken((prev) => prev + 1);
         return;
       }
 
@@ -185,6 +221,21 @@ export default function App() {
 
   const handleThemeToggle = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  };
+
+  const handleViewModeChange = (nextMode: 'split' | 'editor' | 'preview') => {
+    const currentPreviewTop = previewRef.current?.getScrollTop() ?? 0;
+    if (nextMode === 'preview' && findOpen) {
+      setFindOpen(false);
+    }
+    setViewMode(nextMode);
+    if (nextMode === 'preview') {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          previewRef.current?.setScrollTop(currentPreviewTop);
+        });
+      });
+    }
   };
 
   const handleOpen = async () => {
@@ -394,8 +445,22 @@ export default function App() {
     setCursorPosition(nextCursorPosition);
   };
 
+  const ensureEditorForSearch = () => {
+    if (editorRef.current) {
+      return true;
+    }
+    if (fileName && viewMode === 'preview') {
+      setViewMode('split');
+      return false;
+    }
+    return false;
+  };
+
   const handleFindNext = () => {
-    if (!findQuery.trim()) {
+    if (!trimmedFindQuery) {
+      return;
+    }
+    if (!ensureEditorForSearch()) {
       return;
     }
     const found = editorRef.current?.findNext(findQuery, findOptions);
@@ -408,19 +473,17 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!findOpen || !findQuery.trim()) {
+    if (!findOpen || !deferredTrimmedFindQuery || !editorRef.current) {
       return;
     }
-    const found = editorRef.current?.findFirst(findQuery, findOptions);
-    if (!found) {
-      setCurrentMatchIndex(-1);
-      return;
-    }
-    setCurrentMatchIndex(editorRef.current?.getCurrentMatchIndex(findQuery, findOptions) ?? -1);
-  }, [findOpen, findOptions, findQuery]);
+    setCurrentMatchIndex(editorRef.current.getCurrentMatchIndex(deferredFindQuery, findOptions));
+  }, [deferredFindQuery, deferredTrimmedFindQuery, findOpen, findOptions]);
 
   const handleFindPrev = () => {
-    if (!findQuery.trim()) {
+    if (!trimmedFindQuery) {
+      return;
+    }
+    if (!ensureEditorForSearch()) {
       return;
     }
     const found = editorRef.current?.findPrevious(findQuery, findOptions);
@@ -433,7 +496,7 @@ export default function App() {
   };
 
   const handleReplaceOne = () => {
-    if (!findQuery.trim()) {
+    if (!trimmedFindQuery) {
       return;
     }
     const replaced = editorRef.current?.replaceCurrent(findQuery, replaceQuery, findOptions);
@@ -449,7 +512,7 @@ export default function App() {
   };
 
   const handleReplaceAll = () => {
-    if (!findQuery.trim()) {
+    if (!trimmedFindQuery) {
       return;
     }
     const replacedCount = editorRef.current?.replaceAll(findQuery, replaceQuery, findOptions) ?? 0;
@@ -546,7 +609,7 @@ export default function App() {
         theme={theme}
         onThemeToggle={handleThemeToggle}
         viewMode={viewMode}
-        onViewModeChange={setViewMode}
+        onViewModeChange={handleViewModeChange}
         onOpen={handleOpen}
         onSave={handleSave}
         onSaveAs={handleSaveAs}
@@ -554,12 +617,21 @@ export default function App() {
         hasUnsavedChanges={hasUnsavedChanges}
         fileName={fileName}
         findOpen={findOpen}
-        onToggleFind={() => setFindOpen((prev) => !prev)}
+        onToggleFind={() =>
+          setFindOpen((prev) => {
+            const next = !prev;
+            if (next) {
+              setFindFocusToken((token) => token + 1);
+            }
+            return next;
+          })
+        }
       />
 
       {findOpen && (
         <div className="border-b border-border bg-background px-2 sm:px-3 py-2 flex items-center gap-2 flex-wrap">
           <input
+            ref={findInputRef}
             value={findQuery}
             onChange={(e) => setFindQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -622,6 +694,15 @@ export default function App() {
             />
             Regex
           </label>
+          <button
+            type="button"
+            aria-label="Close search"
+            title="Close search"
+            onClick={() => setFindOpen(false)}
+            className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 
@@ -650,6 +731,10 @@ export default function App() {
                     resetScrollToken={resetScrollToken}
                     splitPaneSync={viewMode === 'split'}
                     onSplitPaneSourceNavigate={(offset) => previewRef.current?.scrollToSourceOffset(offset)}
+                    findOpen={findOpen}
+                    searchQuery={deferredFindQuery}
+                    searchOptions={findOptions}
+                    currentMatchIndex={currentMatchIndex}
                   />
                 </Panel>
                 {viewMode === 'split' && (
@@ -669,6 +754,10 @@ export default function App() {
                   assignPdfPrintRootId
                   splitPaneSync={viewMode === 'split'}
                   onSplitPanePreviewNavigate={(offset) => editorRef.current?.scrollToSourceOffset(offset)}
+                  findOpen={findOpen}
+                  searchQuery={deferredFindQuery}
+                  searchOptions={findOptions}
+                  currentMatchIndex={currentMatchIndex}
                 />
               </Panel>
             )}
@@ -686,6 +775,10 @@ export default function App() {
               filePath={filePath}
               resetScrollToken={resetScrollToken}
               assignPdfPrintRootId
+              findOpen={findOpen}
+              searchQuery={deferredFindQuery}
+              searchOptions={findOptions}
+              currentMatchIndex={currentMatchIndex}
             />
           </div>
         )}
