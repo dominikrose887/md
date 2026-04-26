@@ -39,4 +39,6 @@ First public baseline for **MD Studio**: Electron + Vite + React Markdown editor
 - Windows **NSIS** installer and **portable** `.exe` via `electron-builder`.
 - `npm run build:release` and [`FigmaUI/build-github-release.ps1`](./FigmaUI/build-github-release.ps1) for GitHub Release artifacts and `SHA256SUMS.txt`.
 
-After you create git tags (`v1.0.0`, `v1.1.0`, …), you can append the usual Keep a Changelog footer links pointing at GitHub **compare** / **releases**.
+[Unreleased]: https://github.com/dominikrose887/md/compare/v1.1.0...HEAD  
+[1.1.0]: https://github.com/dominikrose887/md/compare/v1.0.0...v1.1.0  
+[1.0.0]: https://github.com/dominikrose887/md/releases/tag/v1.0.0
