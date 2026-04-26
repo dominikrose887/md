@@ -127,5 +127,5 @@ The application is built with:
 ---
 
 **Last updated:** April 23, 2026
-**Version:** 1.0.0
+**Version:** 1.1.0
 `;

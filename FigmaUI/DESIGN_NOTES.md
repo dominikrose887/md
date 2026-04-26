@@ -333,6 +333,6 @@ Local React state:
 
 ---
 
-**Design Version**: 1.0.0  
+**Design Version**: 1.1.0  
 **Last Updated**: April 23, 2026  
 **Implementation**: Production-ready prototype
