@@ -13,9 +13,16 @@ import { suggestedPdfFileName } from '@/utils/pdf';
 import { X } from 'lucide-react';
 
 type FsHandle = FileSystemFileHandle | null;
+const THEME_STORAGE_KEY = 'mdstudio:theme';
 
 export default function App() {
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window === 'undefined') {
+      return 'light';
+    }
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return stored === 'dark' ? 'dark' : 'light';
+  });
   const [viewMode, setViewMode] = useState<'split' | 'editor' | 'preview'>('preview');
   const [content, setContent] = useState('');
   const [fileName, setFileName] = useState('');
@@ -114,6 +121,7 @@ export default function App() {
     } else {
       root.classList.remove('dark');
     }
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
   useEffect(() => {
@@ -164,38 +172,6 @@ export default function App() {
     return () => {
       unsubscribe();
     };
-  }, []);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.ctrlKey && !event.metaKey) {
-        return;
-      }
-      if (event.key.toLowerCase() === 'f') {
-        event.preventDefault();
-        setFindOpen(true);
-        setFindFocusToken((prev) => prev + 1);
-        return;
-      }
-
-      if (event.key.toLowerCase() === 'o') {
-        event.preventDefault();
-        void handleOpen();
-        return;
-      }
-
-      if (event.key.toLowerCase() === 's') {
-        event.preventDefault();
-        if (event.shiftKey) {
-          void handleSaveAs();
-          return;
-        }
-        void handleSave();
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   const detectLineEnding = (text: string): 'LF' | 'CRLF' => (text.includes('\r\n') ? 'CRLF' : 'LF');
@@ -595,6 +571,38 @@ export default function App() {
       event.target.value = '';
     }
   };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey && !event.metaKey) {
+        return;
+      }
+      if (event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        setFindOpen(true);
+        setFindFocusToken((prev) => prev + 1);
+        return;
+      }
+
+      if (event.key.toLowerCase() === 'o') {
+        event.preventDefault();
+        void handleOpen();
+        return;
+      }
+
+      if (event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        if (event.shiftKey) {
+          void handleSaveAs();
+          return;
+        }
+        void handleSave();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleOpen, handleSave, handleSaveAs]);
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">

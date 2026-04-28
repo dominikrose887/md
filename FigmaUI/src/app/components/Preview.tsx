@@ -1,4 +1,4 @@
-import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -11,6 +11,7 @@ import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { Check, Copy } from 'lucide-react';
 import { createKatexSanitizeSchema } from '../../utils/katexSanitizeSchema';
 import { rehypeSourceOffsets } from '../../utils/rehypeSourceOffsets';
 import {
@@ -70,6 +71,33 @@ function wrapFenceForSourceSync(inner: ReactNode, props: Record<string, unknown>
     <div data-md-start={o.start} data-md-end={o.end ?? o.start}>
       {inner}
     </div>
+  );
+}
+
+function CodeBlockCopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={() => void handleCopy()}
+      className="absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded border border-border/70 bg-background/95 px-2 py-1 text-xs text-foreground shadow-sm transition-colors hover:bg-accent"
+      title={copied ? 'Copied' : 'Copy code'}
+      aria-label={copied ? 'Code copied' : 'Copy code block'}
+    >
+      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? 'Copied' : 'Copy'}
+    </button>
   );
 }
 
@@ -403,11 +431,15 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
     if (!splitPaneSync || !onSplitPanePreviewNavigate) {
       return;
     }
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed && selection.toString().trim()) {
+      return;
+    }
     const target = event.target as HTMLElement | null;
     if (!target) {
       return;
     }
-    if (target.closest('input')) {
+    if (target.closest('input, button')) {
       return;
     }
     const link = target.closest('a[href]') as HTMLAnchorElement | null;
@@ -494,9 +526,9 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
       },
       code({ inline, className, children, ...props }: any) {
         const language = resolveFenceLanguage(className);
+        const codeText = String(children).replace(/\n$/, '');
         if (!inline && (language === 'math' || language === 'latex' || language === 'tex')) {
-          const text = String(children).replace(/\n$/, '');
-          const html = katex.renderToString(text, {
+          const html = katex.renderToString(codeText, {
             displayMode: true,
             throwOnError: false,
             output: 'html'
@@ -508,22 +540,25 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
         }
         return !inline && language ? (
           wrapFenceForSourceSync(
-            <SyntaxHighlighter
-              style={theme === 'dark' ? oneDark : oneLight}
-              language={language}
-              PreTag="pre"
-              className="rounded-md"
-              customStyle={{
-                marginBottom: '16px',
-                padding: '16px',
-                borderRadius: '6px',
-                fontSize: '14px',
-                lineHeight: 1.45
-              }}
-              {...props}
-            >
-              {String(children).replace(/\n$/, '')}
-            </SyntaxHighlighter>,
+            <div className="relative">
+              <CodeBlockCopyButton text={codeText} />
+              <SyntaxHighlighter
+                style={theme === 'dark' ? oneDark : oneLight}
+                language={language}
+                PreTag="pre"
+                className="rounded-md"
+                customStyle={{
+                  marginBottom: '16px',
+                  padding: '16px',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  lineHeight: 1.45
+                }}
+                {...props}
+              >
+                {codeText}
+              </SyntaxHighlighter>
+            </div>,
             props
           )
         ) : (

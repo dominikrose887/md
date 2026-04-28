@@ -9,6 +9,18 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) vi
 
 Use this section while developing. Before a release, move bullets into a new `## [X.Y.Z] - date` section and bump `FigmaUI/package.json` (see [`FigmaUI/RELEASING.md`](./FigmaUI/RELEASING.md)).
 
+## [1.2.11] - 2026-04-28
+
+### Fixed
+
+- **Preview text selection in split mode**: selecting text in the preview no longer gets canceled by split-pane source sync click handling.
+- **`Ctrl+S` save parity with Save button**: keyboard save now uses the current app state, matching toolbar save behavior even after content/file state changes.
+- **Theme preference persistence**: dark/light mode is now remembered between app launches, so the last selected theme is restored automatically.
+
+### Added
+
+- **Code block copy button**: fenced code blocks now show a top-right copy button that copies the full block content to the clipboard.
+
 ## [1.2.10] - 2026-04-26
 
 ### Fixed
@@ -121,7 +133,8 @@ First public baseline for **MD Studio**: Electron + Vite + React Markdown editor
 - Windows **NSIS** installer and **portable** `.exe` via `electron-builder`.
 - `npm run build:release` and [`FigmaUI/build-github-release.ps1`](./FigmaUI/build-github-release.ps1) for GitHub Release artifacts and `SHA256SUMS.txt`.
 
-[Unreleased]: https://github.com/dominikrose887/md/compare/v1.2.10...HEAD  
+[Unreleased]: https://github.com/dominikrose887/md/compare/v1.2.11...HEAD  
+[1.2.11]: https://github.com/dominikrose887/md/compare/v1.2.10...v1.2.11  
 [1.2.10]: https://github.com/dominikrose887/md/compare/v1.2.9...v1.2.10  
 [1.2.9]: https://github.com/dominikrose887/md/compare/v1.2.8...v1.2.9  
 [1.2.8]: https://github.com/dominikrose887/md/compare/v1.2.7...v1.2.8  
