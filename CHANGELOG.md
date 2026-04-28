@@ -9,6 +9,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) vi
 
 Use this section while developing. Before a release, move bullets into a new `## [X.Y.Z] - date` section and bump `FigmaUI/package.json` (see [`FigmaUI/RELEASING.md`](./FigmaUI/RELEASING.md)).
 
+## [1.2.13] - 2026-04-28
+
+### Fixed
+
+- **Close flow crash (`Object has been destroyed`)**: close handling now uses a stable window reference and cached `webContents` id, preventing access to destroyed window objects during shutdown.
+- **Close-save IPC race**: when sending close-save requests, the app now checks that the window still exists before messaging the renderer, avoiding post-destroy IPC calls.
+
 ## [1.2.12] - 2026-04-28
 
 ### Fixed
@@ -143,7 +150,8 @@ First public baseline for **MD Studio**: Electron + Vite + React Markdown editor
 - Windows **NSIS** installer and **portable** `.exe` via `electron-builder`.
 - `npm run build:release` and [`FigmaUI/build-github-release.ps1`](./FigmaUI/build-github-release.ps1) for GitHub Release artifacts and `SHA256SUMS.txt`.
 
-[Unreleased]: https://github.com/dominikrose887/md/compare/v1.2.12...HEAD  
+[Unreleased]: https://github.com/dominikrose887/md/compare/v1.2.13...HEAD  
+[1.2.13]: https://github.com/dominikrose887/md/compare/v1.2.12...v1.2.13  
 [1.2.12]: https://github.com/dominikrose887/md/compare/v1.2.11...v1.2.12  
 [1.2.11]: https://github.com/dominikrose887/md/compare/v1.2.10...v1.2.11  
 [1.2.10]: https://github.com/dominikrose887/md/compare/v1.2.9...v1.2.10  

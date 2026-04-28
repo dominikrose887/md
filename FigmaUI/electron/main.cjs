@@ -113,7 +113,7 @@ async function readMarkdownFile(filePath) {
 async function createWindow() {
   const savedState = await readWindowState();
   const initialBounds = savedState?.bounds ?? DEFAULT_WINDOW_BOUNDS;
-  mainWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     title: 'MD Studio',
     width: initialBounds.width,
     height: initialBounds.height,
@@ -129,39 +129,42 @@ async function createWindow() {
     }
   });
 
+  mainWindow = win;
+  const webContentsId = win.webContents.id;
+
   if (isDev) {
-    await mainWindow.loadURL(devServerUrl);
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
+    await win.loadURL(devServerUrl);
+    win.webContents.openDevTools({ mode: 'detach' });
   } else {
-    await mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'renderer', 'index.html'));
+    await win.loadFile(path.join(__dirname, '..', 'dist', 'renderer', 'index.html'));
   }
 
   if (savedState?.isMaximized) {
-    mainWindow.maximize();
+    win.maximize();
   }
   if (savedState?.isFullScreen) {
-    mainWindow.setFullScreen(true);
+    win.setFullScreen(true);
   }
 
-  mainWindow.on('resize', () => scheduleWindowStateSave(mainWindow));
-  mainWindow.on('move', () => scheduleWindowStateSave(mainWindow));
-  mainWindow.on('maximize', () => scheduleWindowStateSave(mainWindow));
-  mainWindow.on('unmaximize', () => scheduleWindowStateSave(mainWindow));
-  mainWindow.on('enter-full-screen', () => scheduleWindowStateSave(mainWindow));
-  mainWindow.on('leave-full-screen', () => scheduleWindowStateSave(mainWindow));
-  mainWindow.on('close', async (event) => {
-    void writeWindowState(mainWindow);
-    if (isClosingAllowed || !mainWindow) {
+  win.on('resize', () => scheduleWindowStateSave(win));
+  win.on('move', () => scheduleWindowStateSave(win));
+  win.on('maximize', () => scheduleWindowStateSave(win));
+  win.on('unmaximize', () => scheduleWindowStateSave(win));
+  win.on('enter-full-screen', () => scheduleWindowStateSave(win));
+  win.on('leave-full-screen', () => scheduleWindowStateSave(win));
+  win.on('close', async (event) => {
+    void writeWindowState(win);
+    if (isClosingAllowed || win.isDestroyed()) {
       return;
     }
-    const closeState = closeStateByWebContentsId.get(mainWindow.webContents.id);
+    const closeState = closeStateByWebContentsId.get(webContentsId);
     if (!closeState?.hasUnsavedChanges) {
       return;
     }
 
     event.preventDefault();
 
-    const { response } = await dialog.showMessageBox(mainWindow, {
+    const { response } = await dialog.showMessageBox(win, {
       type: 'question',
       buttons: ['Save', 'Discard', 'Cancel'],
       defaultId: 0,
@@ -190,7 +193,13 @@ async function createWindow() {
           pendingCloseSaveRequests.delete(requestId);
           resolve(Boolean(success));
         });
-        mainWindow.webContents.send('mdstudio:close-save-request', { requestId, mode });
+        if (win.isDestroyed()) {
+          pendingCloseSaveRequests.delete(requestId);
+          clearTimeout(timeout);
+          resolve(false);
+          return;
+        }
+        win.webContents.send('mdstudio:close-save-request', { requestId, mode });
       });
       if (!saveSucceeded) {
         return;
@@ -198,12 +207,12 @@ async function createWindow() {
     }
 
     isClosingAllowed = true;
-    mainWindow.close();
-  });
-  mainWindow.on('closed', () => {
-    if (mainWindow) {
-      closeStateByWebContentsId.delete(mainWindow.webContents.id);
+    if (!win.isDestroyed()) {
+      win.close();
     }
+  });
+  win.on('closed', () => {
+    closeStateByWebContentsId.delete(webContentsId);
     mainWindow = null;
     isClosingAllowed = false;
   });
