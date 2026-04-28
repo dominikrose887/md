@@ -8,8 +8,11 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173';
 let mainWindow = null;
 let pendingLaunchFile = null;
 let saveWindowStateTimer = null;
+let isClosingAllowed = false;
 const WINDOW_STATE_FILE = 'window-state.json';
 const DEFAULT_WINDOW_BOUNDS = { width: 1400, height: 900 };
+const closeStateByWebContentsId = new Map();
+const pendingCloseSaveRequests = new Map();
 
 function getWindowStateFilePath() {
   return path.join(app.getPath('userData'), WINDOW_STATE_FILE);
@@ -111,6 +114,7 @@ async function createWindow() {
   const savedState = await readWindowState();
   const initialBounds = savedState?.bounds ?? DEFAULT_WINDOW_BOUNDS;
   mainWindow = new BrowserWindow({
+    title: 'MD Studio',
     width: initialBounds.width,
     height: initialBounds.height,
     x: savedState?.bounds?.x,
@@ -145,11 +149,63 @@ async function createWindow() {
   mainWindow.on('unmaximize', () => scheduleWindowStateSave(mainWindow));
   mainWindow.on('enter-full-screen', () => scheduleWindowStateSave(mainWindow));
   mainWindow.on('leave-full-screen', () => scheduleWindowStateSave(mainWindow));
-  mainWindow.on('close', () => {
+  mainWindow.on('close', async (event) => {
     void writeWindowState(mainWindow);
+    if (isClosingAllowed || !mainWindow) {
+      return;
+    }
+    const closeState = closeStateByWebContentsId.get(mainWindow.webContents.id);
+    if (!closeState?.hasUnsavedChanges) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'question',
+      buttons: ['Save', 'Discard', 'Cancel'],
+      defaultId: 0,
+      cancelId: 2,
+      title: 'Unsaved Changes',
+      message: 'Do you want to quit without saving?',
+      detail: closeState.fileName
+        ? `Your changes in "${closeState.fileName}" will be lost.`
+        : 'Your changes in the current document will be lost.'
+    });
+
+    if (response === 2) {
+      return;
+    }
+
+    if (response === 0) {
+      const mode = closeState.canOverwrite ? 'save' : 'saveAs';
+      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const saveSucceeded = await new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          pendingCloseSaveRequests.delete(requestId);
+          resolve(false);
+        }, 60000);
+        pendingCloseSaveRequests.set(requestId, (success) => {
+          clearTimeout(timeout);
+          pendingCloseSaveRequests.delete(requestId);
+          resolve(Boolean(success));
+        });
+        mainWindow.webContents.send('mdstudio:close-save-request', { requestId, mode });
+      });
+      if (!saveSucceeded) {
+        return;
+      }
+    }
+
+    isClosingAllowed = true;
+    mainWindow.close();
   });
   mainWindow.on('closed', () => {
+    if (mainWindow) {
+      closeStateByWebContentsId.delete(mainWindow.webContents.id);
+    }
     mainWindow = null;
+    isClosingAllowed = false;
   });
 }
 
@@ -281,10 +337,31 @@ ipcMain.handle('mdstudio:export-pdf', async (_event, payload) => {
   }
 });
 
+ipcMain.on('mdstudio:set-close-state', (event, payload) => {
+  closeStateByWebContentsId.set(event.sender.id, {
+    hasUnsavedChanges: Boolean(payload?.hasUnsavedChanges),
+    fileName: typeof payload?.fileName === 'string' ? payload.fileName : '',
+    canOverwrite: Boolean(payload?.canOverwrite)
+  });
+});
+
+ipcMain.on('mdstudio:close-save-result', (_event, payload) => {
+  const requestId = payload?.requestId;
+  const notify = requestId ? pendingCloseSaveRequests.get(requestId) : null;
+  if (!notify) {
+    return;
+  }
+  notify(Boolean(payload?.success));
+});
+
 const singleInstance = app.requestSingleInstanceLock();
 if (!singleInstance) {
   app.quit();
 } else {
+  app.setName('MD Studio');
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.rose.mdstudio');
+  }
   app.whenReady().then(createWindow);
 }
 

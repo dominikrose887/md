@@ -9,6 +9,16 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) vi
 
 Use this section while developing. Before a release, move bullets into a new `## [X.Y.Z] - date` section and bump `FigmaUI/package.json` (see [`FigmaUI/RELEASING.md`](./FigmaUI/RELEASING.md)).
 
+## [1.2.12] - 2026-04-28
+
+### Fixed
+
+- **Close flow with unsaved changes**: desktop app close no longer gets stuck when a document has unsaved edits. It now shows an English prompt with **Save**, **Discard**, and **Cancel**.
+- **Close-save behavior**: selecting **Save** runs normal save logic; if the document has no existing file target, it uses **Save As** automatically before quitting.
+- **Discard behavior**: selecting **Discard** closes immediately without saving.
+- **Cancel behavior**: selecting **Cancel** aborts app close and keeps the current window/document open.
+- **Windows app identity**: app name and user model ID are explicitly set to **MD Studio** so OS integration no longer falls back to generic Electron naming.
+
 ## [1.2.11] - 2026-04-28
 
 ### Fixed
@@ -133,7 +143,8 @@ First public baseline for **MD Studio**: Electron + Vite + React Markdown editor
 - Windows **NSIS** installer and **portable** `.exe` via `electron-builder`.
 - `npm run build:release` and [`FigmaUI/build-github-release.ps1`](./FigmaUI/build-github-release.ps1) for GitHub Release artifacts and `SHA256SUMS.txt`.
 
-[Unreleased]: https://github.com/dominikrose887/md/compare/v1.2.11...HEAD  
+[Unreleased]: https://github.com/dominikrose887/md/compare/v1.2.12...HEAD  
+[1.2.12]: https://github.com/dominikrose887/md/compare/v1.2.11...v1.2.12  
 [1.2.11]: https://github.com/dominikrose887/md/compare/v1.2.10...v1.2.11  
 [1.2.10]: https://github.com/dominikrose887/md/compare/v1.2.9...v1.2.10  
 [1.2.9]: https://github.com/dominikrose887/md/compare/v1.2.8...v1.2.9  

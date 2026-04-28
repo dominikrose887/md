@@ -129,6 +129,9 @@ export default function App() {
   }, [content, savedContent]);
 
   useEffect(() => {
+    if (window.mdStudio) {
+      return;
+    }
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!hasUnsavedChanges) {
         return;
@@ -337,7 +340,7 @@ export default function App() {
     }
   };
 
-  const handleSaveAs = async () => {
+  const handleSaveAs = async (): Promise<boolean> => {
     try {
       const data = serializeForSave();
       const mdStudioApi = window.mdStudio;
@@ -355,8 +358,9 @@ export default function App() {
           setSavedContent(content);
           setHasUnsavedChanges(false);
           toast.success(`Saved as ${result.name}`);
+          return true;
         }
-        return;
+        return false;
       }
 
       if ('showSaveFilePicker' in window) {
@@ -387,7 +391,7 @@ export default function App() {
         setSavedContent(content);
         setHasUnsavedChanges(false);
         toast.success(`Saved as ${handle.name}`);
-        return;
+        return true;
       }
 
       const fallbackName = fileName || 'document.md';
@@ -406,13 +410,15 @@ export default function App() {
       setSavedContent(content);
       setHasUnsavedChanges(false);
       toast.success(`Downloaded as ${fallbackName}`);
+      return true;
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
-        return;
+        return false;
       }
       setShowError(true);
       setErrorMessage('Failed to save file');
       toast.error('Failed to save file');
+      return false;
     }
   };
 
@@ -571,6 +577,32 @@ export default function App() {
       event.target.value = '';
     }
   };
+
+  useEffect(() => {
+    const mdStudioApi = window.mdStudio;
+    if (!mdStudioApi?.setCloseState) {
+      return;
+    }
+    mdStudioApi.setCloseState({
+      hasUnsavedChanges,
+      fileName,
+      canOverwrite: Boolean(fileHandleRef.current || nativeFilePathRef.current)
+    });
+  }, [fileName, hasUnsavedChanges]);
+
+  useEffect(() => {
+    const mdStudioApi = window.mdStudio;
+    if (!mdStudioApi?.onCloseSaveRequest || !mdStudioApi.reportCloseSaveResult) {
+      return;
+    }
+    const unsubscribe = mdStudioApi.onCloseSaveRequest(async ({ requestId, mode }) => {
+      const success = mode === 'saveAs' ? await handleSaveAs() : await handleSave();
+      mdStudioApi.reportCloseSaveResult({ requestId, success });
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [handleSave, handleSaveAs]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
