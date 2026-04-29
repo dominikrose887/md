@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { Toaster } from './components/ui/sonner';
 import { suggestedPdfFileName } from '@/utils/pdf';
 import { X } from 'lucide-react';
+import { useSearchWorker } from './hooks/useSearchWorker';
 
 type FsHandle = FileSystemFileHandle | null;
 const THEME_STORAGE_KEY = 'mdstudio:theme';
@@ -35,7 +36,6 @@ export default function App() {
   const [lineEnding, setLineEnding] = useState<'LF' | 'CRLF'>('LF');
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
-  const [committedFindQuery, setCommittedFindQuery] = useState('');
   const [replaceQuery, setReplaceQuery] = useState('');
   const [caseSensitiveFind, setCaseSensitiveFind] = useState(false);
   const [useRegexFind, setUseRegexFind] = useState(false);
@@ -51,7 +51,6 @@ export default function App() {
   const previewRef = useRef<PreviewHandle>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const deferredContent = useDeferredValue(content);
-  const trimmedCommittedQuery = committedFindQuery.trim();
   const findOptions: FindOptions = useMemo(
     () => ({
       caseSensitive: caseSensitiveFind,
@@ -60,44 +59,27 @@ export default function App() {
     }),
     [caseSensitiveFind, useRegexFind, wholeWordFind]
   );
+  const searchState = useSearchWorker(content, findQuery, findOptions, findOpen);
 
-  const totalMatches = useMemo(() => {
-    if (!trimmedCommittedQuery) {
-      return 0;
-    }
-    const editorMatches = editorRef.current?.countMatches(committedFindQuery, findOptions);
-    if (typeof editorMatches === 'number') {
-      return editorMatches;
-    }
-    const options = findOptions;
-    const source = options.useRegex ? committedFindQuery : committedFindQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = options.wholeWord ? `\\b${source}\\b` : source;
-    const flags = options.caseSensitive ? 'g' : 'gi';
-    try {
-      const regex = new RegExp(pattern, flags);
-      return (content.match(regex) ?? []).length;
-    } catch {
-      return 0;
-    }
-  }, [content, committedFindQuery, trimmedCommittedQuery, findOptions]);
+  const totalMatches = searchState.totalCount;
 
   useEffect(() => {
-    if (!findOpen || !trimmedCommittedQuery) {
+    if (!findOpen || !findQuery.trim() || searchState.totalCount === 0) {
       setCurrentMatchIndex(-1);
       return;
     }
     if (!editorRef.current) {
       return;
     }
-    setCurrentMatchIndex(editorRef.current?.getCurrentMatchIndex(committedFindQuery, findOptions) ?? -1);
-  }, [cursorPosition, findOpen, findOptions, committedFindQuery, trimmedCommittedQuery]);
+    setCurrentMatchIndex(editorRef.current.getCurrentMatchIndex(findQuery, findOptions) ?? -1);
+  }, [searchState.totalCount, findOpen, findOptions, findQuery]);
 
   useEffect(() => {
-    if (!findOpen || !trimmedCommittedQuery || currentMatchIndex < 0) {
+    if (!findOpen || !findQuery.trim() || currentMatchIndex < 0) {
       return;
     }
     previewRef.current?.scrollToSearchMatch(currentMatchIndex);
-  }, [currentMatchIndex, findOpen, trimmedCommittedQuery]);
+  }, [currentMatchIndex, findOpen, findQuery]);
 
   useEffect(() => {
     if (!findOpen) {
@@ -112,7 +94,6 @@ export default function App() {
       return;
     }
     setFindOpen(false);
-    setCommittedFindQuery('');
   }, [fileName, findOpen, viewMode]);
 
   useEffect(() => {
@@ -207,7 +188,6 @@ export default function App() {
     const currentPreviewTop = previewRef.current?.getScrollTop() ?? 0;
     if (nextMode === 'preview' && findOpen) {
       setFindOpen(false);
-      setCommittedFindQuery('');
     }
     setViewMode(nextMode);
     if (nextMode === 'preview') {
@@ -448,7 +428,6 @@ export default function App() {
     if (!findQuery.trim()) {
       return;
     }
-    setCommittedFindQuery(findQuery);
     if (!ensureEditorForSearch()) {
       return;
     }
@@ -461,18 +440,10 @@ export default function App() {
     setCurrentMatchIndex(editorRef.current?.getCurrentMatchIndex(findQuery, findOptions) ?? -1);
   };
 
-  useEffect(() => {
-    if (!findOpen || !trimmedCommittedQuery || !editorRef.current) {
-      return;
-    }
-    setCurrentMatchIndex(editorRef.current.getCurrentMatchIndex(committedFindQuery, findOptions));
-  }, [committedFindQuery, trimmedCommittedQuery, findOpen, findOptions]);
-
   const handleFindPrev = () => {
     if (!findQuery.trim()) {
       return;
     }
-    setCommittedFindQuery(findQuery);
     if (!ensureEditorForSearch()) {
       return;
     }
@@ -489,7 +460,6 @@ export default function App() {
     if (!findQuery.trim()) {
       return;
     }
-    setCommittedFindQuery(findQuery);
     const replaced = editorRef.current?.replaceCurrent(findQuery, replaceQuery, findOptions);
     if (!replaced) {
       const found = editorRef.current?.findNext(findQuery, findOptions);
@@ -506,7 +476,6 @@ export default function App() {
     if (!findQuery.trim()) {
       return;
     }
-    setCommittedFindQuery(findQuery);
     const replacedCount = editorRef.current?.replaceAll(findQuery, replaceQuery, findOptions) ?? 0;
     if (replacedCount === 0) {
       toast.info('No matches to replace');
@@ -702,11 +671,8 @@ export default function App() {
             placeholder="Find"
             className="h-8 w-36 sm:w-44 px-2 text-sm rounded border border-border bg-background"
           />
-          <button onClick={handleFindNext} className="h-8 px-3 text-sm rounded bg-primary text-primary-foreground hover:bg-primary/90" title="Search (Enter)">
-            Search
-          </button>
           <span className="text-xs text-muted-foreground w-16 text-center">
-            {totalMatches === 0 ? '0' : `${currentMatchIndex >= 0 ? currentMatchIndex + 1 : 0}/${totalMatches}`}
+            {searchState.isSearching ? '...' : totalMatches === 0 ? '0' : `${currentMatchIndex >= 0 ? currentMatchIndex + 1 : 0}/${totalMatches}`}
           </span>
           <input
             value={replaceQuery}
@@ -756,7 +722,7 @@ export default function App() {
             type="button"
             aria-label="Close search"
             title="Close search"
-            onClick={() => { setFindOpen(false); setCommittedFindQuery(''); }}
+            onClick={() => setFindOpen(false)}
             className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <X className="h-4 w-4" />
@@ -790,9 +756,10 @@ export default function App() {
                     splitPaneSync={viewMode === 'split'}
                     onSplitPaneSourceNavigate={handleEditorSourceNavigate}
                     findOpen={findOpen}
-                    searchQuery={committedFindQuery}
+                    searchQuery={findQuery}
                     searchOptions={findOptions}
                     currentMatchIndex={currentMatchIndex}
+                    workerMatches={searchState.matches}
                   />
                 </Panel>
                 {viewMode === 'split' && (
@@ -813,7 +780,7 @@ export default function App() {
                   splitPaneSync={viewMode === 'split'}
                   onSplitPanePreviewNavigate={(offset) => editorRef.current?.scrollToSourceOffset(offset)}
                   findOpen={findOpen}
-                  searchQuery={committedFindQuery}
+                  searchQuery={findQuery}
                   searchOptions={findOptions}
                   currentMatchIndex={currentMatchIndex}
                 />

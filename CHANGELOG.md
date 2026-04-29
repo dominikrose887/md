@@ -27,7 +27,12 @@ Use this section while developing. Before a release, move bullets into a new `##
 
 ### Changed
 
-- **Search triggers only on explicit action**: typing in the search field no longer runs the search in real time. The search is executed only when the user presses **Enter** in the search input or clicks the new **Search** button. This eliminates multi-second freezes that occurred when typing into the search field on large documents.
+- **Search architecture rewritten for zero-lag input**:
+  - **Debouncing (150 ms)**: typing in the search field no longer triggers a search on every keystroke. The search waits until the user pauses for 150 ms, collapsing rapid key presses into a single search run.
+  - **Web Worker (background thread)**: all regex matching now runs in a dedicated Web Worker off the main thread, so the UI remains responsive even during heavy searches on large documents.
+  - **Incremental search**: when extending a query (e.g. `app` → `apple`), only previous matches are re-checked instead of rescanning the entire document from scratch.
+  - **Content indexing**: the editor pre-computes a line-offset index on file open; the search worker uses this for efficient position lookups without re-parsing the full text.
+  - **Worker-computed highlights**: the Editor component receives pre-computed match positions from the worker, eliminating the redundant main-thread regex pass for the highlight overlay.
 
 ### Added
 

@@ -14,6 +14,8 @@ interface EditorProps {
   searchQuery?: string;
   searchOptions?: FindOptions;
   currentMatchIndex?: number;
+  /** Pre-computed matches from the search worker (avoids main-thread regex scan for highlights). */
+  workerMatches?: Array<{ index: number; length: number }>;
 }
 
 export interface FindOptions {
@@ -44,7 +46,8 @@ export const Editor = memo(forwardRef<EditorHandle, EditorProps>(function Editor
   findOpen = false,
   searchQuery = '',
   searchOptions,
-  currentMatchIndex = -1
+  currentMatchIndex = -1,
+  workerMatches
 }, ref) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
@@ -145,6 +148,9 @@ export const Editor = memo(forwardRef<EditorHandle, EditorProps>(function Editor
     if (!findOpen || !searchQuery.trim()) {
       return [] as Array<{ index: number; length: number }>;
     }
+    if (workerMatches) {
+      return workerMatches;
+    }
     const escaped = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const source = searchOptions?.useRegex ? searchQuery : escaped;
     const pattern = searchOptions?.wholeWord ? `\\b${source}\\b` : source;
@@ -166,7 +172,7 @@ export const Editor = memo(forwardRef<EditorHandle, EditorProps>(function Editor
       matches.push({ index: result.index, length });
     }
     return matches;
-  }, [findOpen, searchOptions, searchQuery, value]);
+  }, [findOpen, searchOptions, searchQuery, value, workerMatches]);
 
   const highlightedEditorContent = useMemo(() => {
     if (!findOpen || !searchMatches.length) {
