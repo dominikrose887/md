@@ -25,6 +25,10 @@ Use this section while developing. Before a release, move bullets into a new `##
   - **getComputedStyle caching**: line-height is read once and cached, removing repeated style recalculations during search navigation and mouse interaction.
   - **mouseDown allocation removed**: click hit-testing reuses the already-computed `lineCount` instead of `value.split('\n').length`.
 
+### Changed
+
+- **Search triggers only on explicit action**: typing in the search field no longer runs the search in real time. The search is executed only when the user presses **Enter** in the search input or clicks the new **Search** button. This eliminates multi-second freezes that occurred when typing into the search field on large documents.
+
 ### Added
 
 - **Disabled controls when no document is open**: view-mode buttons (split / editor / preview), the find-and-replace toggle, and `Ctrl+F` are now disabled until a file is opened, preventing interaction with an empty workspace.

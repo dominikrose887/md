@@ -35,6 +35,7 @@ export default function App() {
   const [lineEnding, setLineEnding] = useState<'LF' | 'CRLF'>('LF');
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
+  const [committedFindQuery, setCommittedFindQuery] = useState('');
   const [replaceQuery, setReplaceQuery] = useState('');
   const [caseSensitiveFind, setCaseSensitiveFind] = useState(false);
   const [useRegexFind, setUseRegexFind] = useState(false);
@@ -50,9 +51,7 @@ export default function App() {
   const previewRef = useRef<PreviewHandle>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const deferredContent = useDeferredValue(content);
-  const deferredFindQuery = useDeferredValue(findQuery);
-  const trimmedFindQuery = findQuery.trim();
-  const deferredTrimmedFindQuery = deferredFindQuery.trim();
+  const trimmedCommittedQuery = committedFindQuery.trim();
   const findOptions: FindOptions = useMemo(
     () => ({
       caseSensitive: caseSensitiveFind,
@@ -63,15 +62,15 @@ export default function App() {
   );
 
   const totalMatches = useMemo(() => {
-    if (!deferredTrimmedFindQuery) {
+    if (!trimmedCommittedQuery) {
       return 0;
     }
-    const editorMatches = editorRef.current?.countMatches(deferredFindQuery, findOptions);
+    const editorMatches = editorRef.current?.countMatches(committedFindQuery, findOptions);
     if (typeof editorMatches === 'number') {
       return editorMatches;
     }
     const options = findOptions;
-    const source = options.useRegex ? deferredFindQuery : deferredFindQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const source = options.useRegex ? committedFindQuery : committedFindQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const pattern = options.wholeWord ? `\\b${source}\\b` : source;
     const flags = options.caseSensitive ? 'g' : 'gi';
     try {
@@ -80,25 +79,25 @@ export default function App() {
     } catch {
       return 0;
     }
-  }, [content, deferredFindQuery, deferredTrimmedFindQuery, findOptions]);
+  }, [content, committedFindQuery, trimmedCommittedQuery, findOptions]);
 
   useEffect(() => {
-    if (!findOpen || !deferredTrimmedFindQuery) {
+    if (!findOpen || !trimmedCommittedQuery) {
       setCurrentMatchIndex(-1);
       return;
     }
     if (!editorRef.current) {
       return;
     }
-    setCurrentMatchIndex(editorRef.current?.getCurrentMatchIndex(deferredFindQuery, findOptions) ?? -1);
-  }, [cursorPosition, findOpen, findOptions, deferredFindQuery, deferredTrimmedFindQuery]);
+    setCurrentMatchIndex(editorRef.current?.getCurrentMatchIndex(committedFindQuery, findOptions) ?? -1);
+  }, [cursorPosition, findOpen, findOptions, committedFindQuery, trimmedCommittedQuery]);
 
   useEffect(() => {
-    if (!findOpen || !deferredTrimmedFindQuery || currentMatchIndex < 0) {
+    if (!findOpen || !trimmedCommittedQuery || currentMatchIndex < 0) {
       return;
     }
     previewRef.current?.scrollToSearchMatch(currentMatchIndex);
-  }, [currentMatchIndex, findOpen, deferredTrimmedFindQuery]);
+  }, [currentMatchIndex, findOpen, trimmedCommittedQuery]);
 
   useEffect(() => {
     if (!findOpen) {
@@ -113,6 +112,7 @@ export default function App() {
       return;
     }
     setFindOpen(false);
+    setCommittedFindQuery('');
   }, [fileName, findOpen, viewMode]);
 
   useEffect(() => {
@@ -207,6 +207,7 @@ export default function App() {
     const currentPreviewTop = previewRef.current?.getScrollTop() ?? 0;
     if (nextMode === 'preview' && findOpen) {
       setFindOpen(false);
+      setCommittedFindQuery('');
     }
     setViewMode(nextMode);
     if (nextMode === 'preview') {
@@ -444,9 +445,10 @@ export default function App() {
   };
 
   const handleFindNext = () => {
-    if (!trimmedFindQuery) {
+    if (!findQuery.trim()) {
       return;
     }
+    setCommittedFindQuery(findQuery);
     if (!ensureEditorForSearch()) {
       return;
     }
@@ -460,16 +462,17 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!findOpen || !deferredTrimmedFindQuery || !editorRef.current) {
+    if (!findOpen || !trimmedCommittedQuery || !editorRef.current) {
       return;
     }
-    setCurrentMatchIndex(editorRef.current.getCurrentMatchIndex(deferredFindQuery, findOptions));
-  }, [deferredFindQuery, deferredTrimmedFindQuery, findOpen, findOptions]);
+    setCurrentMatchIndex(editorRef.current.getCurrentMatchIndex(committedFindQuery, findOptions));
+  }, [committedFindQuery, trimmedCommittedQuery, findOpen, findOptions]);
 
   const handleFindPrev = () => {
-    if (!trimmedFindQuery) {
+    if (!findQuery.trim()) {
       return;
     }
+    setCommittedFindQuery(findQuery);
     if (!ensureEditorForSearch()) {
       return;
     }
@@ -483,9 +486,10 @@ export default function App() {
   };
 
   const handleReplaceOne = () => {
-    if (!trimmedFindQuery) {
+    if (!findQuery.trim()) {
       return;
     }
+    setCommittedFindQuery(findQuery);
     const replaced = editorRef.current?.replaceCurrent(findQuery, replaceQuery, findOptions);
     if (!replaced) {
       const found = editorRef.current?.findNext(findQuery, findOptions);
@@ -499,9 +503,10 @@ export default function App() {
   };
 
   const handleReplaceAll = () => {
-    if (!trimmedFindQuery) {
+    if (!findQuery.trim()) {
       return;
     }
+    setCommittedFindQuery(findQuery);
     const replacedCount = editorRef.current?.replaceAll(findQuery, replaceQuery, findOptions) ?? 0;
     if (replacedCount === 0) {
       toast.info('No matches to replace');
@@ -697,6 +702,9 @@ export default function App() {
             placeholder="Find"
             className="h-8 w-36 sm:w-44 px-2 text-sm rounded border border-border bg-background"
           />
+          <button onClick={handleFindNext} className="h-8 px-3 text-sm rounded bg-primary text-primary-foreground hover:bg-primary/90" title="Search (Enter)">
+            Search
+          </button>
           <span className="text-xs text-muted-foreground w-16 text-center">
             {totalMatches === 0 ? '0' : `${currentMatchIndex >= 0 ? currentMatchIndex + 1 : 0}/${totalMatches}`}
           </span>
@@ -748,7 +756,7 @@ export default function App() {
             type="button"
             aria-label="Close search"
             title="Close search"
-            onClick={() => setFindOpen(false)}
+            onClick={() => { setFindOpen(false); setCommittedFindQuery(''); }}
             className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <X className="h-4 w-4" />
@@ -782,7 +790,7 @@ export default function App() {
                     splitPaneSync={viewMode === 'split'}
                     onSplitPaneSourceNavigate={handleEditorSourceNavigate}
                     findOpen={findOpen}
-                    searchQuery={deferredFindQuery}
+                    searchQuery={committedFindQuery}
                     searchOptions={findOptions}
                     currentMatchIndex={currentMatchIndex}
                   />
@@ -805,7 +813,7 @@ export default function App() {
                   splitPaneSync={viewMode === 'split'}
                   onSplitPanePreviewNavigate={(offset) => editorRef.current?.scrollToSourceOffset(offset)}
                   findOpen={findOpen}
-                  searchQuery={deferredFindQuery}
+                  searchQuery={committedFindQuery}
                   searchOptions={findOptions}
                   currentMatchIndex={currentMatchIndex}
                 />
