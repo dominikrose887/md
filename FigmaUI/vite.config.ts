@@ -8,7 +8,17 @@ export default defineConfig({
   base: './',
   build: {
     outDir: 'dist/renderer',
-    emptyOutDir: true
+    emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom'],
+          'markdown': ['react-markdown', 'remark-gfm', 'remark-math', 'rehype-raw', 'rehype-katex', 'rehype-sanitize'],
+          'katex': ['katex'],
+          'syntax-highlight': ['react-syntax-highlighter'],
+        }
+      }
+    }
   },
   plugins: [
     // The React and Tailwind plugins are both required for Make, even if

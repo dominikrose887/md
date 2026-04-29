@@ -42,6 +42,7 @@ export default function App() {
   const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
   const [findFocusToken, setFindFocusToken] = useState(0);
   const [resetScrollToken, setResetScrollToken] = useState(0);
+  const [isPdfExporting, setIsPdfExporting] = useState(false);
   const fileHandleRef = useRef<FsHandle>(null);
   const nativeFilePathRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -537,6 +538,7 @@ export default function App() {
       }
     }
 
+    setIsPdfExporting(true);
     document.documentElement.classList.add('md-studio-printing-pdf');
     await new Promise<void>((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
@@ -556,6 +558,7 @@ export default function App() {
       }
     } finally {
       document.documentElement.classList.remove('md-studio-printing-pdf');
+      setIsPdfExporting(false);
     }
   };
 
@@ -611,6 +614,9 @@ export default function App() {
       }
       if (event.key.toLowerCase() === 'f') {
         event.preventDefault();
+        if (!fileName) {
+          return;
+        }
         setFindOpen(true);
         setFindFocusToken((prev) => prev + 1);
         return;
@@ -634,7 +640,7 @@ export default function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleOpen, handleSave, handleSaveAs]);
+  }, [fileName, handleOpen, handleSave, handleSaveAs]);
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
@@ -787,7 +793,7 @@ export default function App() {
               <Panel defaultSize={50} minSize={30} className="h-full min-h-0">
                 <Preview
                   ref={previewRef}
-                  content={viewMode === 'split' ? content : deferredContent}
+                  content={deferredContent}
                   theme={theme}
                   filePath={filePath}
                   resetScrollToken={resetScrollToken}
@@ -804,7 +810,7 @@ export default function App() {
           </PanelGroup>
         )}
 
-        {fileName && viewMode === 'editor' && (
+        {fileName && viewMode === 'editor' && isPdfExporting && (
           <div
             className="fixed -left-[10000px] top-0 h-[1200px] w-[1024px] overflow-hidden opacity-0 pointer-events-none"
             aria-hidden
@@ -815,10 +821,10 @@ export default function App() {
               filePath={filePath}
               resetScrollToken={resetScrollToken}
               assignPdfPrintRootId
-              findOpen={findOpen}
-              searchQuery={deferredFindQuery}
+              findOpen={false}
+              searchQuery=""
               searchOptions={findOptions}
-              currentMatchIndex={currentMatchIndex}
+              currentMatchIndex={-1}
             />
           </div>
         )}

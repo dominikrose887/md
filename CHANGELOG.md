@@ -9,6 +9,27 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) vi
 
 Use this section while developing. Before a release, move bullets into a new `## [X.Y.Z] - date` section and bump `FigmaUI/package.json` (see [`FigmaUI/RELEASING.md`](./FigmaUI/RELEASING.md)).
 
+## [1.3.0] - 2026-04-29
+
+### Fixed
+
+- **Significant performance optimisation across the entire application**:
+  - **Bundle size**: removed 181 unused npm packages (MUI, 20+ Radix UI, recharts, react-router, react-dnd, motion, etc.) and eliminated `next-themes` dependency from the Toaster component.
+  - **Code splitting**: the build now emits separate chunks for `react-vendor`, `markdown`, `katex`, and `syntax-highlight`; the main application chunk dropped to ~108 kB.
+  - **Lazy-loaded syntax highlighter**: `react-syntax-highlighter` (~1.6 MB) is loaded on demand when the first code block appears, no longer blocking initial page load.
+  - **Preview deferred in split mode**: the preview pane now uses `useDeferredValue` content in split view, preventing the full markdown pipeline from blocking editor input on every keystroke.
+  - **Offscreen Preview eliminated**: editor-only mode no longer renders a hidden Preview continuously; it is only instantiated during PDF export.
+  - **Search highlight race condition**: preview DOM highlighting now runs via `requestAnimationFrame` after React commits, fixing intermittent missing highlights.
+  - **Editor highlight overlay**: the `<pre>` highlight overlay is no longer mounted when find is closed, eliminating unnecessary DOM work during normal editing.
+  - **findNext / findPrevious 660× faster**: viewport scrolling now uses binary search on a pre-computed line-offset array instead of a per-call O(n) character scan (66 ms → 0.1 ms per call on a 1 100-line document).
+  - **getComputedStyle caching**: line-height is read once and cached, removing repeated style recalculations during search navigation and mouse interaction.
+  - **mouseDown allocation removed**: click hit-testing reuses the already-computed `lineCount` instead of `value.split('\n').length`.
+
+### Added
+
+- **Disabled controls when no document is open**: view-mode buttons (split / editor / preview), the find-and-replace toggle, and `Ctrl+F` are now disabled until a file is opened, preventing interaction with an empty workspace.
+- **Performance benchmark test suite** (`performance.test.tsx`): 21 automated benchmarks covering preview render, editor render, search, highlighting, view switching, and raw computation on a generated ~1 100-line markdown document with code blocks, tables, math, and TOC links.
+
 ## [1.2.13] - 2026-04-28
 
 ### Fixed
@@ -150,7 +171,8 @@ First public baseline for **MD Studio**: Electron + Vite + React Markdown editor
 - Windows **NSIS** installer and **portable** `.exe` via `electron-builder`.
 - `npm run build:release` and [`FigmaUI/build-github-release.ps1`](./FigmaUI/build-github-release.ps1) for GitHub Release artifacts and `SHA256SUMS.txt`.
 
-[Unreleased]: https://github.com/dominikrose887/md/compare/v1.2.13...HEAD  
+[Unreleased]: https://github.com/dominikrose887/md/compare/v1.3.0...HEAD  
+[1.3.0]: https://github.com/dominikrose887/md/compare/v1.2.13...v1.3.0  
 [1.2.13]: https://github.com/dominikrose887/md/compare/v1.2.12...v1.2.13  
 [1.2.12]: https://github.com/dominikrose887/md/compare/v1.2.11...v1.2.12  
 [1.2.11]: https://github.com/dominikrose887/md/compare/v1.2.10...v1.2.11  

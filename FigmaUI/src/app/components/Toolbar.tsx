@@ -82,7 +82,8 @@ export function Toolbar({
         <div className="flex items-center gap-1 bg-muted rounded p-1">
           <button
             onClick={() => onViewModeChange('split')}
-            className={`px-2 py-1 rounded text-sm transition-colors ${
+            disabled={!fileName}
+            className={`px-2 py-1 rounded text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
               viewMode === 'split' ? 'bg-background shadow-sm' : 'hover:bg-background/50'
             }`}
             title="Split view"
@@ -91,7 +92,8 @@ export function Toolbar({
           </button>
           <button
             onClick={() => onViewModeChange('editor')}
-            className={`px-2 py-1 rounded text-sm transition-colors ${
+            disabled={!fileName}
+            className={`px-2 py-1 rounded text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
               viewMode === 'editor' ? 'bg-background shadow-sm' : 'hover:bg-background/50'
             }`}
             title="Editor only"
@@ -100,7 +102,8 @@ export function Toolbar({
           </button>
           <button
             onClick={() => onViewModeChange('preview')}
-            className={`px-2 py-1 rounded text-sm transition-colors ${
+            disabled={!fileName}
+            className={`px-2 py-1 rounded text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
               viewMode === 'preview' ? 'bg-background shadow-sm' : 'hover:bg-background/50'
             }`}
             title="Preview only"
@@ -123,7 +126,8 @@ export function Toolbar({
 
         <button
           onClick={onToggleFind}
-          className={`p-2 rounded transition-colors ${findOpen ? 'bg-accent' : 'hover:bg-accent'}`}
+          disabled={!fileName}
+          className={`p-2 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${findOpen ? 'bg-accent' : 'hover:bg-accent'}`}
           title="Find and replace"
         >
           <Search className="w-4 h-4" />

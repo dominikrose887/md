@@ -1,4 +1,4 @@
-import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState, Suspense, lazy } from 'react';
 import type { ReactNode } from 'react';
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -9,9 +9,38 @@ import rehypeKatex from 'rehype-katex';
 import rehypeSanitize from 'rehype-sanitize';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Check, Copy } from 'lucide-react';
+
+const LazyCodeBlock = lazy(() =>
+  Promise.all([
+    import('react-syntax-highlighter'),
+    import('react-syntax-highlighter/dist/esm/styles/prism/one-dark'),
+    import('react-syntax-highlighter/dist/esm/styles/prism/one-light')
+  ]).then(([{ Prism }, oneDarkMod, oneLightMod]) => {
+    const styles = { oneDark: oneDarkMod.default, oneLight: oneLightMod.default };
+    function CodeHighlighter({ theme, language, children, ...props }: any) {
+      return (
+        <Prism
+          style={theme === 'dark' ? styles.oneDark : styles.oneLight}
+          language={language}
+          PreTag="pre"
+          className="rounded-md"
+          customStyle={{
+            marginBottom: '16px',
+            padding: '16px',
+            borderRadius: '6px',
+            fontSize: '14px',
+            lineHeight: 1.45
+          }}
+          {...props}
+        >
+          {children}
+        </Prism>
+      );
+    }
+    return { default: CodeHighlighter };
+  })
+);
 import { createKatexSanitizeSchema } from '../../utils/katexSanitizeSchema';
 import { rehypeSourceOffsets } from '../../utils/rehypeSourceOffsets';
 import {
@@ -404,8 +433,15 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
   );
 
   useEffect(() => {
-    applySearchHighlights();
-  }, [content, currentMatchIndex, findOpen, searchOptions, searchQuery]);
+    if (!findOpen || !searchQuery.trim()) {
+      clearSearchHighlights();
+      return;
+    }
+    const raf = requestAnimationFrame(() => {
+      applySearchHighlights();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [content, findOpen, searchOptions, searchQuery]);
 
   useEffect(() => {
     syncActiveSearchHighlight(currentMatchIndex);
@@ -542,22 +578,11 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
           wrapFenceForSourceSync(
             <div className="relative">
               <CodeBlockCopyButton text={codeText} />
-              <SyntaxHighlighter
-                style={theme === 'dark' ? oneDark : oneLight}
-                language={language}
-                PreTag="pre"
-                className="rounded-md"
-                customStyle={{
-                  marginBottom: '16px',
-                  padding: '16px',
-                  borderRadius: '6px',
-                  fontSize: '14px',
-                  lineHeight: 1.45
-                }}
-                {...props}
-              >
-                {codeText}
-              </SyntaxHighlighter>
+              <Suspense fallback={<pre className="rounded-md p-4 text-sm bg-muted/50 overflow-x-auto"><code>{codeText}</code></pre>}>
+                <LazyCodeBlock theme={theme} language={language} {...props}>
+                  {codeText}
+                </LazyCodeBlock>
+              </Suspense>
             </div>,
             props
           )

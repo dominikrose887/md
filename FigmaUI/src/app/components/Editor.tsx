@@ -114,18 +114,17 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
     };
   };
 
-  const lineCount = useMemo(() => {
-    if (!value) {
-      return 1;
-    }
-    let count = 1;
+  const lineStartOffsets = useMemo(() => {
+    const offsets = [0];
     for (let i = 0; i < value.length; i += 1) {
       if (value.charCodeAt(i) === 10) {
-        count += 1;
+        offsets.push(i + 1);
       }
     }
-    return count;
+    return offsets;
   }, [value]);
+
+  const lineCount = lineStartOffsets.length;
 
   const virtualLineRange = useMemo(() => {
     const visibleLines = Math.max(1, Math.ceil((viewportHeight || 1) / EDITOR_LINE_HEIGHT));
@@ -248,20 +247,32 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
     return matches;
   };
 
+  const cachedLineHeightRef = useRef<number>(0);
+
   const moveViewportToSelection = (start: number) => {
     const textarea = textareaRef.current;
     if (!textarea) {
       return;
     }
-    const style = window.getComputedStyle(textarea);
-    const lineHeight = Number.parseFloat(style.lineHeight) || EDITOR_LINE_HEIGHT;
-    let lineIndex = 0;
+    if (!cachedLineHeightRef.current) {
+      const style = window.getComputedStyle(textarea);
+      cachedLineHeightRef.current = Number.parseFloat(style.lineHeight) || EDITOR_LINE_HEIGHT;
+    }
+    const lineHeight = cachedLineHeightRef.current;
     const safeStart = Math.max(0, Math.min(start, textarea.value.length));
-    for (let i = 0; i < safeStart; i += 1) {
-      if (textarea.value.charCodeAt(i) === 10) {
-        lineIndex += 1;
+
+    let lo = 0;
+    let hi = lineStartOffsets.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >>> 1;
+      if (lineStartOffsets[mid] <= safeStart) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
       }
     }
+    const lineIndex = lo;
+
     const targetTop = lineIndex * lineHeight - (textarea.clientHeight * 0.35);
     const maxTop = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
     textarea.scrollTop = Math.max(0, Math.min(maxTop, targetTop));
@@ -463,10 +474,13 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
         value={value}
         onMouseDown={(e) => {
           const target = e.currentTarget;
-          const styles = window.getComputedStyle(target);
-          const lineHeight = Number.parseFloat(styles.lineHeight) || 21;
-          const paddingTop = Number.parseFloat(styles.paddingTop) || 0;
-          const contentHeight = value.split('\n').length * lineHeight + paddingTop;
+          if (!cachedLineHeightRef.current) {
+            const styles = window.getComputedStyle(target);
+            cachedLineHeightRef.current = Number.parseFloat(styles.lineHeight) || EDITOR_LINE_HEIGHT;
+          }
+          const lineHeight = cachedLineHeightRef.current;
+          const paddingTop = 16;
+          const contentHeight = lineCount * lineHeight + paddingTop;
           if (e.nativeEvent.offsetY > contentHeight) {
             e.preventDefault();
             target.focus();
@@ -501,25 +515,27 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
         spellCheck={false}
         placeholder="Start typing your markdown here..."
       />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-y-0 right-0 z-0 overflow-hidden"
-        style={{ left: showLineNumbers ? '48px' : '0px' }}
-      >
-        <pre
-          className="m-0 h-full min-h-0 overflow-hidden p-4 whitespace-pre-wrap break-words"
-          style={{
-            fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-            fontSize: '14px',
-            lineHeight: '1.5',
-            tabSize: 2,
-            color: 'transparent',
-            transform: `translateY(-${scrollTop}px)`
-          }}
+      {findOpen && searchMatches.length > 0 && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 right-0 z-0 overflow-hidden"
+          style={{ left: showLineNumbers ? '48px' : '0px' }}
         >
-          {highlightedEditorContent}
-        </pre>
-      </div>
+          <pre
+            className="m-0 h-full min-h-0 overflow-hidden p-4 whitespace-pre-wrap break-words"
+            style={{
+              fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+              fontSize: '14px',
+              lineHeight: '1.5',
+              tabSize: 2,
+              color: 'transparent',
+              transform: `translateY(-${scrollTop}px)`
+            }}
+          >
+            {highlightedEditorContent}
+          </pre>
+        </div>
+      )}
     </div>
   );
 });
