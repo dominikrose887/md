@@ -3,6 +3,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { Toolbar } from './components/Toolbar';
 import { Editor, type EditorHandle, type FindOptions } from './components/Editor';
 import { Preview, type PreviewHandle } from './components/Preview';
+import { FindBar } from './components/FindBar';
 import { StatusBar } from './components/StatusBar';
 import { EmptyState } from './components/EmptyState';
 import { ErrorState } from './components/ErrorState';
@@ -10,7 +11,6 @@ import { SAMPLE_MARKDOWN } from './components/SampleContent';
 import { toast } from 'sonner';
 import { Toaster } from './components/ui/sonner';
 import { suggestedPdfFileName } from '@/utils/pdf';
-import { X } from 'lucide-react';
 import { useSearchWorker } from './hooks/useSearchWorker';
 
 type FsHandle = FileSystemFileHandle | null;
@@ -49,7 +49,6 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<EditorHandle>(null);
   const previewRef = useRef<PreviewHandle>(null);
-  const findInputRef = useRef<HTMLInputElement>(null);
   const deferredContent = useDeferredValue(content);
   const findOptions: FindOptions = useMemo(
     () => ({
@@ -80,14 +79,6 @@ export default function App() {
     }
     previewRef.current?.scrollToSearchMatch(currentMatchIndex);
   }, [currentMatchIndex, findOpen, findQuery]);
-
-  useEffect(() => {
-    if (!findOpen) {
-      return;
-    }
-    findInputRef.current?.focus();
-    findInputRef.current?.select();
-  }, [findOpen, findFocusToken]);
 
   useEffect(() => {
     if (!findOpen || !fileName || viewMode !== 'preview') {
@@ -424,6 +415,11 @@ export default function App() {
     return false;
   };
 
+  const handleCloseFindBar = useCallback(() => {
+    setFindOpen(false);
+    setFindQuery('');
+  }, []);
+
   const handleFindNext = () => {
     if (!findQuery.trim()) {
       return;
@@ -652,83 +648,26 @@ export default function App() {
         }
       />
 
-      {findOpen && (
-        <div className="border-b border-border bg-background px-2 sm:px-3 py-2 flex items-center gap-2 flex-wrap">
-          <input
-            ref={findInputRef}
-            value={findQuery}
-            onChange={(e) => setFindQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                if (e.shiftKey) {
-                  handleFindPrev();
-                } else {
-                  handleFindNext();
-                }
-              }
-            }}
-            placeholder="Find"
-            className="h-8 w-36 sm:w-44 px-2 text-sm rounded border border-border bg-background"
-          />
-          <span className="text-xs text-muted-foreground w-16 text-center">
-            {searchState.isSearching ? '...' : totalMatches === 0 ? '0' : `${currentMatchIndex >= 0 ? currentMatchIndex + 1 : 0}/${totalMatches}`}
-          </span>
-          <input
-            value={replaceQuery}
-            onChange={(e) => setReplaceQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                if (e.shiftKey) {
-                  handleFindPrev();
-                } else {
-                  handleFindNext();
-                }
-              }
-            }}
-            placeholder="Replace"
-            className="h-8 w-36 sm:w-44 px-2 text-sm rounded border border-border bg-background"
-          />
-          <button onClick={handleFindPrev} className="h-8 px-2 text-sm rounded hover:bg-accent">Prev</button>
-          <button onClick={handleFindNext} className="h-8 px-2 text-sm rounded hover:bg-accent">Next</button>
-          <button onClick={handleReplaceOne} className="h-8 px-2 text-sm rounded hover:bg-accent">Replace</button>
-          <button onClick={handleReplaceAll} className="h-8 px-2 text-sm rounded hover:bg-accent">Replace All</button>
-          <label className="ml-2 text-xs flex items-center gap-1">
-            <input
-              type="checkbox"
-              checked={caseSensitiveFind}
-              onChange={(e) => setCaseSensitiveFind(e.target.checked)}
-            />
-            Case sensitive
-          </label>
-          <label className="text-xs flex items-center gap-1">
-            <input
-              type="checkbox"
-              checked={wholeWordFind}
-              onChange={(e) => setWholeWordFind(e.target.checked)}
-            />
-            Whole word
-          </label>
-          <label className="text-xs flex items-center gap-1">
-            <input
-              type="checkbox"
-              checked={useRegexFind}
-              onChange={(e) => setUseRegexFind(e.target.checked)}
-            />
-            Regex
-          </label>
-          <button
-            type="button"
-            aria-label="Close search"
-            title="Close search"
-            onClick={() => setFindOpen(false)}
-            className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      )}
+      <FindBar
+        findOpen={findOpen}
+        focusToken={findFocusToken}
+        totalMatches={totalMatches}
+        currentMatchIndex={currentMatchIndex}
+        isSearching={searchState.isSearching}
+        onQueryChange={setFindQuery}
+        onReplaceQueryChange={setReplaceQuery}
+        onFindNext={handleFindNext}
+        onFindPrev={handleFindPrev}
+        onReplaceOne={handleReplaceOne}
+        onReplaceAll={handleReplaceAll}
+        onClose={handleCloseFindBar}
+        onCaseSensitiveChange={setCaseSensitiveFind}
+        onWholeWordChange={setWholeWordFind}
+        onRegexChange={setUseRegexFind}
+        caseSensitive={caseSensitiveFind}
+        wholeWord={wholeWordFind}
+        useRegex={useRegexFind}
+      />
 
       <div className="flex-1 min-h-0 overflow-hidden">
         {showError ? (

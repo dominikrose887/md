@@ -28,8 +28,9 @@ Use this section while developing. Before a release, move bullets into a new `##
 ### Changed
 
 - **Search architecture rewritten for zero-lag input**:
-  - **Debouncing (150 ms)**: typing in the search field no longer triggers a search on every keystroke. The search waits until the user pauses for 150 ms, collapsing rapid key presses into a single search run.
-  - **Web Worker (background thread)**: all regex matching now runs in a dedicated Web Worker off the main thread, so the UI remains responsive even during heavy searches on large documents.
+  - **Isolated FindBar component**: the search input now manages its own local state; typing no longer triggers React re-renders of the Editor, Preview, or any parent component — the UI thread stays completely free during input.
+  - **Debouncing (150 ms)**: the search query is propagated to the application only after the user pauses for 150 ms, collapsing rapid key presses into a single search run.
+  - **Web Worker (background thread)**: all regex matching runs in a dedicated Web Worker off the main thread, so even when the search executes, it cannot block scrolling or typing.
   - **Incremental search**: when extending a query (e.g. `app` → `apple`), only previous matches are re-checked instead of rescanning the entire document from scratch.
   - **Content indexing**: the editor pre-computes a line-offset index on file open; the search worker uses this for efficient position lookups without re-parsing the full text.
   - **Worker-computed highlights**: the Editor component receives pre-computed match positions from the worker, eliminating the redundant main-thread regex pass for the highlight overlay.
