@@ -1,5 +1,4 @@
-import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState, useCallback } from 'react';
 
 interface EditorProps {
   value: string;
@@ -11,7 +10,6 @@ interface EditorProps {
   splitPaneSync?: boolean;
   onSplitPaneSourceNavigate?: (sourceOffset: number) => void;
   findOpen?: boolean;
-  searchQuery?: string;
   searchOptions?: FindOptions;
   currentMatchIndex?: number;
   /** Pre-computed matches from the search worker (avoids main-thread regex scan for highlights). */
@@ -35,7 +33,7 @@ export interface EditorHandle {
   scrollToSourceOffset: (offset: number) => void;
 }
 
-export const Editor = memo(forwardRef<EditorHandle, EditorProps>(function Editor({
+export const Editor = memo(forwardRef<EditorHandle, EditorProps>(function EditorInner({
   value,
   onChange,
   onCursorPositionChange,
@@ -44,7 +42,6 @@ export const Editor = memo(forwardRef<EditorHandle, EditorProps>(function Editor
   splitPaneSync,
   onSplitPaneSourceNavigate,
   findOpen = false,
-  searchQuery = '',
   searchOptions,
   currentMatchIndex = -1,
   workerMatches
@@ -144,63 +141,56 @@ export const Editor = memo(forwardRef<EditorHandle, EditorProps>(function Editor
     return nums;
   }, [virtualLineRange.end, virtualLineRange.start]);
 
-  const searchMatches = useMemo(() => {
-    if (!findOpen || !searchQuery.trim()) {
-      return [] as Array<{ index: number; length: number }>;
-    }
-    if (workerMatches) {
-      return workerMatches;
-    }
-    const escaped = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const source = searchOptions?.useRegex ? searchQuery : escaped;
-    const pattern = searchOptions?.wholeWord ? `\\b${source}\\b` : source;
-    const flags = searchOptions?.caseSensitive ? 'g' : 'gi';
-    let regex: RegExp;
-    try {
-      regex = new RegExp(pattern, flags);
-    } catch {
-      return [] as Array<{ index: number; length: number }>;
-    }
-    const matches: Array<{ index: number; length: number }> = [];
-    let result: RegExpExecArray | null;
-    while ((result = regex.exec(value)) !== null) {
-      const length = result[0]?.length ?? 0;
-      if (length <= 0) {
-        regex.lastIndex += 1;
-        continue;
-      }
-      matches.push({ index: result.index, length });
-    }
-    return matches;
-  }, [findOpen, searchOptions, searchQuery, value, workerMatches]);
+  const overlayRef = useRef<HTMLPreElement>(null);
+  const overlayContainerRef = useRef<HTMLDivElement>(null);
+  const workerMatchesRef = useRef<Array<{ index: number; length: number }>>([]);
+  const findOpenRef = useRef(findOpen);
+  const currentMatchIndexRef = useRef(currentMatchIndex);
+  findOpenRef.current = findOpen;
+  currentMatchIndexRef.current = currentMatchIndex;
 
-  const highlightedEditorContent = useMemo(() => {
-    if (!findOpen || !searchMatches.length) {
-      return value;
+  if (workerMatches) {
+    workerMatchesRef.current = workerMatches;
+  } else if (!findOpen) {
+    workerMatchesRef.current = [];
+  }
+
+  const paintHighlightOverlay = useCallback(() => {
+    const pre = overlayRef.current;
+    const container = overlayContainerRef.current;
+    if (!pre || !container) return;
+    const matches = workerMatchesRef.current;
+    if (!findOpenRef.current || matches.length === 0) {
+      pre.textContent = '';
+      container.style.display = 'none';
+      return;
     }
-    const out: Array<string | ReactNode> = [];
+    container.style.display = '';
+    const text = value;
+    let html = '';
     let cursor = 0;
-    for (let i = 0; i < searchMatches.length; i += 1) {
-      const match = searchMatches[i];
-      if (match.index > cursor) {
-        out.push(value.slice(cursor, match.index));
+    for (let i = 0; i < matches.length; i++) {
+      const m = matches[i];
+      if (m.index > cursor) {
+        html += escapeHtml(text.slice(cursor, m.index));
       }
-      const text = value.slice(match.index, match.index + match.length);
-      out.push(
-        <mark
-          key={`${match.index}:${match.length}:${i}`}
-          className={i === currentMatchIndex ? 'bg-orange-300/70 dark:bg-orange-500/45' : 'bg-yellow-300/65 dark:bg-yellow-500/35'}
-        >
-          {text}
-        </mark>
-      );
-      cursor = match.index + match.length;
+      const cls = i === currentMatchIndexRef.current
+        ? 'bg-orange-300/70 dark:bg-orange-500/45'
+        : 'bg-yellow-300/65 dark:bg-yellow-500/35';
+      html += `<mark class="${cls}">${escapeHtml(text.slice(m.index, m.index + m.length))}</mark>`;
+      cursor = m.index + m.length;
     }
-    if (cursor < value.length) {
-      out.push(value.slice(cursor));
+    if (cursor < text.length) {
+      html += escapeHtml(text.slice(cursor));
     }
-    return out;
-  }, [currentMatchIndex, findOpen, searchMatches, value]);
+    pre.innerHTML = html;
+  }, [value]);
+
+  useEffect(() => {
+    paintHighlightOverlay();
+  }, [workerMatches, findOpen, currentMatchIndex, paintHighlightOverlay]);
+
+  const escapeHtml = (str: string) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -521,27 +511,37 @@ export const Editor = memo(forwardRef<EditorHandle, EditorProps>(function Editor
         spellCheck={false}
         placeholder="Start typing your markdown here..."
       />
-      {findOpen && searchMatches.length > 0 && (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-y-0 right-0 z-0 overflow-hidden"
-          style={{ left: showLineNumbers ? '48px' : '0px' }}
-        >
-          <pre
-            className="m-0 h-full min-h-0 overflow-hidden p-4 whitespace-pre-wrap break-words"
-            style={{
-              fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-              fontSize: '14px',
-              lineHeight: '1.5',
-              tabSize: 2,
-              color: 'transparent',
-              transform: `translateY(-${scrollTop}px)`
-            }}
-          >
-            {highlightedEditorContent}
-          </pre>
-        </div>
-      )}
+      <div
+        ref={overlayContainerRef}
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 right-0 z-0 overflow-hidden"
+        style={{ left: showLineNumbers ? '48px' : '0px', display: 'none' }}
+      >
+        <pre
+          ref={overlayRef}
+          className="m-0 h-full min-h-0 overflow-hidden p-4 whitespace-pre-wrap break-words"
+          style={{
+            fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+            fontSize: '14px',
+            lineHeight: '1.5',
+            tabSize: 2,
+            color: 'transparent',
+            transform: `translateY(-${scrollTop}px)`
+          }}
+        />
+      </div>
     </div>
   );
-}));
+}), (prev, next) => {
+  if (prev.value !== next.value) return false;
+  if (prev.onChange !== next.onChange) return false;
+  if (prev.onCursorPositionChange !== next.onCursorPositionChange) return false;
+  if (prev.showLineNumbers !== next.showLineNumbers) return false;
+  if (prev.resetScrollToken !== next.resetScrollToken) return false;
+  if (prev.splitPaneSync !== next.splitPaneSync) return false;
+  if (prev.onSplitPaneSourceNavigate !== next.onSplitPaneSourceNavigate) return false;
+  if (prev.workerMatches !== next.workerMatches) return false;
+  if (prev.findOpen !== next.findOpen) return false;
+  if (prev.currentMatchIndex !== next.currentMatchIndex) return false;
+  return true;
+});

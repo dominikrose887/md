@@ -28,12 +28,13 @@ Use this section while developing. Before a release, move bullets into a new `##
 ### Changed
 
 - **Search architecture rewritten for zero-lag input**:
-  - **Isolated FindBar component**: the search input now manages its own local state; typing no longer triggers React re-renders of the Editor, Preview, or any parent component — the UI thread stays completely free during input.
-  - **Debouncing (150 ms)**: the search query is propagated to the application only after the user pauses for 150 ms, collapsing rapid key presses into a single search run.
+  - **Isolated FindBar component**: the search input manages its own local state; typing no longer triggers React re-renders of the Editor, Preview, or any parent component — the UI thread stays completely free during input.
+  - **Debouncing (150 ms)**: the search query propagates to the application only after the user pauses for 150 ms, collapsing rapid key presses into a single search run.
   - **Web Worker (background thread)**: all regex matching runs in a dedicated Web Worker off the main thread, so even when the search executes, it cannot block scrolling or typing.
   - **Incremental search**: when extending a query (e.g. `app` → `apple`), only previous matches are re-checked instead of rescanning the entire document from scratch.
   - **Content indexing**: the editor pre-computes a line-offset index on file open; the search worker uses this for efficient position lookups without re-parsing the full text.
-  - **Worker-computed highlights**: the Editor component receives pre-computed match positions from the worker, eliminating the redundant main-thread regex pass for the highlight overlay.
+  - **DOM-based highlight overlay**: the Editor's highlight `<pre>` uses direct `innerHTML` manipulation instead of React reconciliation, eliminating the creation of thousands of React virtual nodes for large documents.
+  - **Preview no longer re-renders on search state changes**: a custom `React.memo` comparator excludes search-related props; highlighting is applied imperatively via DOM TreeWalker without re-running the markdown pipeline (react-markdown, rehype, katex, syntax-highlight).
 
 ### Added
 

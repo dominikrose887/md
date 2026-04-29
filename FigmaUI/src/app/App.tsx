@@ -65,12 +65,14 @@ export default function App() {
   useEffect(() => {
     if (!findOpen || !findQuery.trim() || searchState.totalCount === 0) {
       setCurrentMatchIndex(-1);
+      previewRef.current?.updateSearchHighlights(findQuery, findOptions, findOpen);
       return;
     }
     if (!editorRef.current) {
       return;
     }
     setCurrentMatchIndex(editorRef.current.getCurrentMatchIndex(findQuery, findOptions) ?? -1);
+    previewRef.current?.updateSearchHighlights(findQuery, findOptions, findOpen);
   }, [searchState.totalCount, findOpen, findOptions, findQuery]);
 
   useEffect(() => {
@@ -78,6 +80,7 @@ export default function App() {
       return;
     }
     previewRef.current?.scrollToSearchMatch(currentMatchIndex);
+    previewRef.current?.syncActiveHighlight(currentMatchIndex);
   }, [currentMatchIndex, findOpen, findQuery]);
 
   useEffect(() => {
@@ -695,7 +698,6 @@ export default function App() {
                     splitPaneSync={viewMode === 'split'}
                     onSplitPaneSourceNavigate={handleEditorSourceNavigate}
                     findOpen={findOpen}
-                    searchQuery={findQuery}
                     searchOptions={findOptions}
                     currentMatchIndex={currentMatchIndex}
                     workerMatches={searchState.matches}

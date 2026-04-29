@@ -133,6 +133,8 @@ function CodeBlockCopyButton({ text }: { text: string }) {
 export interface PreviewHandle {
   scrollToSourceOffset: (offset: number) => void;
   scrollToSearchMatch: (index: number) => void;
+  updateSearchHighlights: (query: string, options: FindOptions | undefined, findOpen: boolean) => void;
+  syncActiveHighlight: (index: number) => void;
   getScrollTop: () => number;
   setScrollTop: (value: number) => void;
 }
@@ -171,6 +173,12 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
 ) {
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const highlightedMatchesRef = useRef<HTMLElement[]>([]);
+  const searchQueryRef = useRef(searchQuery);
+  const searchOptionsRef = useRef(searchOptions);
+  const findOpenRef = useRef(findOpen);
+  searchQueryRef.current = searchQuery;
+  searchOptionsRef.current = searchOptions;
+  findOpenRef.current = findOpen;
 
   const sanitizeSchema = useMemo(() => {
     const base = createKatexSanitizeSchema();
@@ -316,14 +324,16 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
 
   const applySearchHighlights = () => {
     clearSearchHighlights();
-    if (!findOpen || !searchQuery.trim()) {
+    const sq = searchQueryRef.current;
+    const so = searchOptionsRef.current;
+    if (!findOpenRef.current || !sq.trim()) {
       return;
     }
     const root = previewContainerRef.current?.querySelector('.markdown-body');
     if (!root) {
       return;
     }
-    const regex = buildSearchRegex(searchQuery, searchOptions);
+    const regex = buildSearchRegex(sq, so);
     if (!regex) {
       return;
     }
@@ -418,6 +428,21 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
         }
         target.scrollIntoView({ behavior: 'smooth', block: 'center' });
       },
+      updateSearchHighlights(query: string, options: FindOptions | undefined, open: boolean) {
+        searchQueryRef.current = query;
+        searchOptionsRef.current = options;
+        findOpenRef.current = open;
+        if (!open || !query.trim()) {
+          clearSearchHighlights();
+          return;
+        }
+        requestAnimationFrame(() => {
+          applySearchHighlights();
+        });
+      },
+      syncActiveHighlight(index: number) {
+        syncActiveSearchHighlight(index);
+      },
       getScrollTop() {
         return previewContainerRef.current?.scrollTop ?? 0;
       },
@@ -431,21 +456,6 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
     }),
     [content]
   );
-
-  useEffect(() => {
-    if (!findOpen || !searchQuery.trim()) {
-      clearSearchHighlights();
-      return;
-    }
-    const raf = requestAnimationFrame(() => {
-      applySearchHighlights();
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [content, findOpen, searchOptions, searchQuery]);
-
-  useEffect(() => {
-    syncActiveSearchHighlight(currentMatchIndex);
-  }, [currentMatchIndex]);
 
   const hasRawHtml = useMemo(() => /<[/a-zA-Z][^>]*>/.test(preparedContent), [preparedContent]);
   const rehypePlugins = useMemo(
@@ -615,4 +625,13 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
   );
 });
 
-export const Preview = memo(PreviewInner);
+export const Preview = memo(PreviewInner, (prev, next) => {
+  if (prev.content !== next.content) return false;
+  if (prev.theme !== next.theme) return false;
+  if (prev.filePath !== next.filePath) return false;
+  if (prev.resetScrollToken !== next.resetScrollToken) return false;
+  if (prev.assignPdfPrintRootId !== next.assignPdfPrintRootId) return false;
+  if (prev.splitPaneSync !== next.splitPaneSync) return false;
+  if (prev.onSplitPanePreviewNavigate !== next.onSplitPanePreviewNavigate) return false;
+  return true;
+});
