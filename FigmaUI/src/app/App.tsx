@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useDeferredValue, useMemo } from 'react';
+import { useState, useEffect, useRef, useDeferredValue, useMemo, useCallback } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { Toolbar } from './components/Toolbar';
 import { Editor, type EditorHandle, type FindOptions } from './components/Editor';
@@ -83,22 +83,22 @@ export default function App() {
   }, [content, deferredFindQuery, deferredTrimmedFindQuery, findOptions]);
 
   useEffect(() => {
-    if (!findOpen || !trimmedFindQuery) {
+    if (!findOpen || !deferredTrimmedFindQuery) {
       setCurrentMatchIndex(-1);
       return;
     }
     if (!editorRef.current) {
       return;
     }
-    setCurrentMatchIndex(editorRef.current?.getCurrentMatchIndex(findQuery, findOptions) ?? -1);
-  }, [cursorPosition, findOpen, findOptions, findQuery, trimmedFindQuery]);
+    setCurrentMatchIndex(editorRef.current?.getCurrentMatchIndex(deferredFindQuery, findOptions) ?? -1);
+  }, [cursorPosition, findOpen, findOptions, deferredFindQuery, deferredTrimmedFindQuery]);
 
   useEffect(() => {
-    if (!findOpen || !trimmedFindQuery || currentMatchIndex < 0) {
+    if (!findOpen || !deferredTrimmedFindQuery || currentMatchIndex < 0) {
       return;
     }
     previewRef.current?.scrollToSearchMatch(currentMatchIndex);
-  }, [currentMatchIndex, findOpen, trimmedFindQuery]);
+  }, [currentMatchIndex, findOpen, deferredTrimmedFindQuery]);
 
   useEffect(() => {
     if (!findOpen) {
@@ -423,10 +423,14 @@ export default function App() {
     }
   };
 
-  const handleContentChange = (newContent: string, nextCursorPosition: { line: number; col: number }) => {
+  const handleContentChange = useCallback((newContent: string, nextCursorPosition: { line: number; col: number }) => {
     setContent(newContent);
     setCursorPosition(nextCursorPosition);
-  };
+  }, []);
+
+  const handleEditorSourceNavigate = useCallback((offset: number) => {
+    previewRef.current?.scrollToSourceOffset(offset);
+  }, []);
 
   const ensureEditorForSearch = () => {
     if (editorRef.current) {
@@ -776,7 +780,7 @@ export default function App() {
                     showLineNumbers={true}
                     resetScrollToken={resetScrollToken}
                     splitPaneSync={viewMode === 'split'}
-                    onSplitPaneSourceNavigate={(offset) => previewRef.current?.scrollToSourceOffset(offset)}
+                    onSplitPaneSourceNavigate={handleEditorSourceNavigate}
                     findOpen={findOpen}
                     searchQuery={deferredFindQuery}
                     searchOptions={findOptions}

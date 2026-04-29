@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 interface EditorProps {
@@ -33,7 +33,7 @@ export interface EditorHandle {
   scrollToSourceOffset: (offset: number) => void;
 }
 
-export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
+export const Editor = memo(forwardRef<EditorHandle, EditorProps>(function Editor({
   value,
   onChange,
   onCursorPositionChange,
@@ -538,4 +538,4 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor({
       )}
     </div>
   );
-});
+}));
