@@ -1,4 +1,4 @@
-import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState, Suspense, lazy } from 'react';
+import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState, useDeferredValue, Suspense, lazy } from 'react';
 import type { ReactNode } from 'react';
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -271,6 +271,8 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
     [content]
   );
 
+  const deferredPreparedContent = useDeferredValue(preparedContent);
+
   useEffect(() => {
     if (previewContainerRef.current) {
       previewContainerRef.current.scrollTop = 0;
@@ -457,7 +459,7 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
     [content]
   );
 
-  const hasRawHtml = useMemo(() => /<[/a-zA-Z][^>]*>/.test(preparedContent), [preparedContent]);
+  const hasRawHtml = useMemo(() => /<[/a-zA-Z][^>]*>/.test(deferredPreparedContent), [deferredPreparedContent]);
   const rehypePlugins = useMemo(
     () =>
       hasRawHtml
@@ -618,7 +620,7 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
         role="presentation"
       >
         <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins as any} components={markdownComponents}>
-          {preparedContent}
+          {deferredPreparedContent}
         </ReactMarkdown>
       </div>
     </div>

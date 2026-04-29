@@ -1,4 +1,18 @@
-import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState, useCallback } from 'react';
+import { forwardRef, memo, useEffect, useImperativeHandle, useRef } from 'react';
+import { EditorState, StateField, StateEffect, Compartment } from '@codemirror/state';
+import {
+  EditorView,
+  Decoration,
+  type DecorationSet,
+  keymap,
+  lineNumbers,
+  placeholder as cmPlaceholder,
+  drawSelection,
+  highlightActiveLine
+} from '@codemirror/view';
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { markdown } from '@codemirror/lang-markdown';
+import { indentUnit } from '@codemirror/language';
 
 interface EditorProps {
   value: string;
@@ -6,13 +20,11 @@ interface EditorProps {
   onCursorPositionChange?: (cursorPosition: { line: number; col: number }) => void;
   showLineNumbers?: boolean;
   resetScrollToken?: number;
-  /** When set, clicking the editor reports the caret byte offset for split-pane preview sync. */
   splitPaneSync?: boolean;
   onSplitPaneSourceNavigate?: (sourceOffset: number) => void;
   findOpen?: boolean;
   searchOptions?: FindOptions;
   currentMatchIndex?: number;
-  /** Pre-computed matches from the search worker (avoids main-thread regex scan for highlights). */
   workerMatches?: Array<{ index: number; length: number }>;
 }
 
@@ -33,515 +45,478 @@ export interface EditorHandle {
   scrollToSourceOffset: (offset: number) => void;
 }
 
-export const Editor = memo(forwardRef<EditorHandle, EditorProps>(function EditorInner({
-  value,
-  onChange,
-  onCursorPositionChange,
-  showLineNumbers = true,
-  resetScrollToken,
-  splitPaneSync,
-  onSplitPaneSourceNavigate,
-  findOpen = false,
-  searchOptions,
-  currentMatchIndex = -1,
-  workerMatches
-}, ref) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const lineNumbersRef = useRef<HTMLDivElement>(null);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState(0);
-  const matchCacheRef = useRef<{
-    key: string;
-    matches: Array<{ index: number; length: number }>;
-  } | null>(null);
-  const EDITOR_LINE_HEIGHT = 21;
-  const LINE_OVERSCAN = 50;
+const MATCH_INACTIVE_DECO = Decoration.mark({ class: 'cm-search-match' });
+const MATCH_ACTIVE_DECO = Decoration.mark({ class: 'cm-search-match-active' });
 
-  useEffect(() => {
-    if (lineNumbersRef.current && textareaRef.current) {
-      lineNumbersRef.current.scrollTop = textareaRef.current.scrollTop;
-    }
-  }, []);
+const setHighlightsEffect = StateEffect.define<{
+  matches: Array<{ index: number; length: number }>;
+  active: number;
+}>();
 
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
-    const updateHeight = () => setViewportHeight(textarea.clientHeight);
-    updateHeight();
-    if (typeof ResizeObserver !== 'undefined') {
-      const observer = new ResizeObserver(updateHeight);
-      observer.observe(textarea);
-      return () => observer.disconnect();
-    }
-    window.addEventListener('resize', updateHeight);
-    return () => window.removeEventListener('resize', updateHeight);
-  }, []);
-
-  useEffect(() => {
-    if (!textareaRef.current) {
-      return;
-    }
-    textareaRef.current.scrollTop = 0;
-    if (lineNumbersRef.current) {
-      lineNumbersRef.current.scrollTop = 0;
-    }
-  }, [resetScrollToken]);
-
-  const handleScroll = () => {
-    if (lineNumbersRef.current && textareaRef.current) {
-      const textarea = textareaRef.current;
-      lineNumbersRef.current.scrollTop = textarea.scrollTop;
-      setScrollTop(textarea.scrollTop);
-      setViewportHeight(textarea.clientHeight);
-    }
-  };
-
-  const getCursorPosition = (text: string, selectionStart: number) => {
-    let line = 1;
-    let lastLineStart = 0;
-    const end = Math.max(0, Math.min(selectionStart, text.length));
-    for (let i = 0; i < end; i += 1) {
-      if (text.charCodeAt(i) === 10) {
-        line += 1;
-        lastLineStart = i + 1;
+const highlightField = StateField.define<DecorationSet>({
+  create() {
+    return Decoration.none;
+  },
+  update(deco, tr) {
+    for (const e of tr.effects) {
+      if (e.is(setHighlightsEffect)) {
+        const { matches, active } = e.value;
+        if (!matches.length) return Decoration.none;
+        const docLen = tr.state.doc.length;
+        const ranges = [];
+        for (let i = 0; i < matches.length; i++) {
+          const m = matches[i];
+          const from = Math.min(m.index, docLen);
+          const to = Math.min(m.index + m.length, docLen);
+          if (from >= to) continue;
+          ranges.push(
+            (i === active ? MATCH_ACTIVE_DECO : MATCH_INACTIVE_DECO).range(from, to)
+          );
+        }
+        return Decoration.set(ranges, true);
       }
     }
-    return {
-      line,
-      col: end - lastLineStart + 1
-    };
-  };
+    if (tr.docChanged) return deco.map(tr.changes);
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f)
+});
 
-  const lineStartOffsets = useMemo(() => {
-    const offsets = [0];
-    for (let i = 0; i < value.length; i += 1) {
-      if (value.charCodeAt(i) === 10) {
-        offsets.push(i + 1);
-      }
-    }
-    return offsets;
-  }, [value]);
-
-  const lineCount = lineStartOffsets.length;
-
-  const virtualLineRange = useMemo(() => {
-    const visibleLines = Math.max(1, Math.ceil((viewportHeight || 1) / EDITOR_LINE_HEIGHT));
-    const start = Math.max(0, Math.floor(scrollTop / EDITOR_LINE_HEIGHT) - LINE_OVERSCAN);
-    const end = Math.min(lineCount, start + visibleLines + (LINE_OVERSCAN * 2));
-    return { start, end };
-  }, [lineCount, scrollTop, viewportHeight]);
-
-  const renderedLineNumbers = useMemo(() => {
-    const nums: number[] = [];
-    for (let i = virtualLineRange.start + 1; i <= virtualLineRange.end; i += 1) {
-      nums.push(i);
-    }
-    return nums;
-  }, [virtualLineRange.end, virtualLineRange.start]);
-
-  const overlayRef = useRef<HTMLPreElement>(null);
-  const overlayContainerRef = useRef<HTMLDivElement>(null);
-  const workerMatchesRef = useRef<Array<{ index: number; length: number }>>([]);
-  const findOpenRef = useRef(findOpen);
-  const currentMatchIndexRef = useRef(currentMatchIndex);
-  findOpenRef.current = findOpen;
-  currentMatchIndexRef.current = currentMatchIndex;
-
-  if (workerMatches) {
-    workerMatchesRef.current = workerMatches;
-  } else if (!findOpen) {
-    workerMatchesRef.current = [];
+const editorBaseTheme = EditorView.theme({
+  '&': {
+    height: '100%',
+    fontSize: '14px',
+    backgroundColor: 'var(--background)',
+  },
+  '.cm-scroller': {
+    overflow: 'auto',
+    fontFamily:
+      'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+    lineHeight: '1.5'
+  },
+  '.cm-content': {
+    padding: '16px 0',
+    caretColor: 'var(--foreground)',
+    color: 'var(--foreground)',
+  },
+  '.cm-line': {
+    padding: '0 16px'
+  },
+  '&.cm-focused': {
+    outline: 'none'
+  },
+  '&.cm-focused .cm-cursor': {
+    borderLeftColor: 'var(--foreground)'
+  },
+  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
+    backgroundColor: 'var(--accent) !important'
+  },
+  '.cm-gutters': {
+    backgroundColor: 'color-mix(in srgb, var(--muted) 30%, transparent)',
+    borderRight: '1px solid var(--border)',
+    color: 'var(--muted-foreground)',
+    minWidth: '48px'
+  },
+  '.cm-gutter.cm-lineNumbers .cm-gutterElement': {
+    padding: '0 12px 0 0',
+    textAlign: 'right',
+    fontSize: '14px',
+    lineHeight: '1.5'
+  },
+  '.cm-activeLineGutter': {
+    backgroundColor: 'transparent'
+  },
+  '.cm-activeLine': {
+    backgroundColor: 'transparent'
+  },
+  '.cm-search-match': {
+    backgroundColor: 'rgb(253 224 71 / 0.65)',
+    borderRadius: '2px'
+  },
+  '.cm-search-match-active': {
+    backgroundColor: 'rgb(253 186 116 / 0.7)',
+    borderRadius: '2px'
   }
+});
 
-  const paintHighlightOverlay = useCallback(() => {
-    const pre = overlayRef.current;
-    const container = overlayContainerRef.current;
-    if (!pre || !container) return;
-    const matches = workerMatchesRef.current;
-    if (!findOpenRef.current || matches.length === 0) {
-      pre.textContent = '';
-      container.style.display = 'none';
-      return;
-    }
-    container.style.display = '';
-    const text = value;
-    let html = '';
-    let cursor = 0;
-    for (let i = 0; i < matches.length; i++) {
-      const m = matches[i];
-      if (m.index > cursor) {
-        html += escapeHtml(text.slice(cursor, m.index));
-      }
-      const cls = i === currentMatchIndexRef.current
-        ? 'bg-orange-300/70 dark:bg-orange-500/45'
-        : 'bg-yellow-300/65 dark:bg-yellow-500/35';
-      html += `<mark class="${cls}">${escapeHtml(text.slice(m.index, m.index + m.length))}</mark>`;
-      cursor = m.index + m.length;
-    }
-    if (cursor < text.length) {
-      html += escapeHtml(text.slice(cursor));
-    }
-    pre.innerHTML = html;
-  }, [value]);
-
-  useEffect(() => {
-    paintHighlightOverlay();
-  }, [workerMatches, findOpen, currentMatchIndex, paintHighlightOverlay]);
-
-  const escapeHtml = (str: string) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-  const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-  const buildRegex = (query: string, options?: FindOptions) => {
-    if (!query) {
-      return null;
-    }
-    const source = options?.useRegex ? query : escapeRegex(query);
-    const pattern = options?.wholeWord ? `\\b${source}\\b` : source;
-    const flags = options?.caseSensitive ? 'g' : 'gi';
-    try {
-      return new RegExp(pattern, flags);
-    } catch {
-      return null;
-    }
-  };
-
-  const findAllMatches = (query: string, options?: FindOptions) => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return [];
-    }
-    const regex = buildRegex(query, options);
-    if (!regex) {
-      return [];
-    }
-    const content = textarea.value;
-    const cacheKey = [
-      content,
-      query,
-      options?.caseSensitive ? '1' : '0',
-      options?.useRegex ? '1' : '0',
-      options?.wholeWord ? '1' : '0'
-    ].join('\u0000');
-    if (matchCacheRef.current?.key === cacheKey) {
-      return matchCacheRef.current.matches;
-    }
-
-    const matches: Array<{ index: number; length: number }> = [];
-    let result: RegExpExecArray | null;
-    while ((result = regex.exec(content)) !== null) {
-      const length = result[0]?.length ?? 0;
-      if (length <= 0) {
-        regex.lastIndex += 1;
-        continue;
-      }
-      matches.push({ index: result.index, length });
-    }
-    matchCacheRef.current = { key: cacheKey, matches };
-    return matches;
-  };
-
-  const cachedLineHeightRef = useRef<number>(0);
-
-  const moveViewportToSelection = (start: number) => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
-    if (!cachedLineHeightRef.current) {
-      const style = window.getComputedStyle(textarea);
-      cachedLineHeightRef.current = Number.parseFloat(style.lineHeight) || EDITOR_LINE_HEIGHT;
-    }
-    const lineHeight = cachedLineHeightRef.current;
-    const safeStart = Math.max(0, Math.min(start, textarea.value.length));
-
-    let lo = 0;
-    let hi = lineStartOffsets.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >>> 1;
-      if (lineStartOffsets[mid] <= safeStart) {
-        lo = mid;
-      } else {
-        hi = mid - 1;
-      }
-    }
-    const lineIndex = lo;
-
-    const targetTop = lineIndex * lineHeight - (textarea.clientHeight * 0.35);
-    const maxTop = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
-    textarea.scrollTop = Math.max(0, Math.min(maxTop, targetTop));
-    setScrollTop(textarea.scrollTop);
-    setViewportHeight(textarea.clientHeight);
-    if (lineNumbersRef.current) {
-      lineNumbersRef.current.scrollTop = textarea.scrollTop;
-    }
-  };
-
-  useImperativeHandle(ref, () => ({
-    findFirst(query: string, options?: FindOptions) {
-      const textarea = textareaRef.current;
-      if (!textarea || !query) {
-        return false;
-      }
-      const matches = findAllMatches(query, options);
-      if (!matches.length) {
-        return false;
-      }
-      const first = matches[0];
-      textarea.setSelectionRange(first.index, first.index + first.length);
-      moveViewportToSelection(first.index);
-      onCursorPositionChange?.(getCursorPosition(textarea.value, first.index));
-      return true;
+const editorDarkOverrides = EditorView.theme(
+  {
+    '.cm-search-match': {
+      backgroundColor: 'rgb(234 179 8 / 0.35)'
     },
+    '.cm-search-match-active': {
+      backgroundColor: 'rgb(249 115 22 / 0.45)'
+    }
+  },
+  { dark: true }
+);
 
-    findNext(query: string, options?: FindOptions) {
-      const textarea = textareaRef.current;
-      if (!textarea || !query) {
-        return false;
-      }
-      const matches = findAllMatches(query, options);
-      if (!matches.length) {
-        return false;
-      }
-      const fromIndex = textarea.selectionEnd;
-      const next = matches.find((match) => match.index >= fromIndex) ?? matches[0];
+const lineNumbersCompartment = new Compartment();
+const darkCompartment = new Compartment();
 
-      textarea.setSelectionRange(next.index, next.index + next.length);
-      moveViewportToSelection(next.index);
-      onCursorPositionChange?.(getCursorPosition(textarea.value, next.index));
-      return true;
+const CONTENT_SYNC_DELAY = 200;
+const SPLIT_SYNC_DELAY = 150;
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildRegex(query: string, options?: FindOptions): RegExp | null {
+  if (!query) return null;
+  const source = options?.useRegex ? query : escapeRegex(query);
+  const pattern = options?.wholeWord ? `\\b${source}\\b` : source;
+  const flags = options?.caseSensitive ? 'g' : 'gi';
+  try {
+    return new RegExp(pattern, flags);
+  } catch {
+    return null;
+  }
+}
+
+export const Editor = memo(
+  forwardRef<EditorHandle, EditorProps>(function EditorInner(
+    {
+      value,
+      onChange,
+      onCursorPositionChange,
+      showLineNumbers: showLN = true,
+      resetScrollToken,
+      splitPaneSync,
+      onSplitPaneSourceNavigate,
+      findOpen = false,
+      currentMatchIndex = -1,
+      workerMatches
     },
+    ref
+  ) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const viewRef = useRef<EditorView | null>(null);
+    const onChangeRef = useRef(onChange);
+    const onCursorRef = useRef(onCursorPositionChange);
+    const splitSyncRef = useRef(splitPaneSync);
+    const onSplitNavRef = useRef(onSplitPaneSourceNavigate);
+    const suppressExternalRef = useRef(false);
+    const contentSyncTimer = useRef<ReturnType<typeof setTimeout> | undefined>();
+    const splitSyncTimer = useRef<ReturnType<typeof setTimeout> | undefined>();
+    onChangeRef.current = onChange;
+    onCursorRef.current = onCursorPositionChange;
+    splitSyncRef.current = splitPaneSync;
+    onSplitNavRef.current = onSplitPaneSourceNavigate;
 
-    findPrevious(query: string, options?: FindOptions) {
-      const textarea = textareaRef.current;
-      if (!textarea || !query) {
-        return false;
-      }
-      const matches = findAllMatches(query, options);
-      if (!matches.length) {
-        return false;
-      }
-      const fromIndex = Math.max(0, textarea.selectionStart - 1);
-      let previous = matches[matches.length - 1];
-      for (let i = matches.length - 1; i >= 0; i -= 1) {
-        if (matches[i].index <= fromIndex) {
-          previous = matches[i];
-          break;
-        }
-      }
+    const findOpenRef = useRef(findOpen);
+    const workerMatchesRef = useRef(workerMatches);
+    const currentMatchIndexRef = useRef(currentMatchIndex);
+    findOpenRef.current = findOpen;
+    workerMatchesRef.current = workerMatches;
+    currentMatchIndexRef.current = currentMatchIndex;
 
-      textarea.setSelectionRange(previous.index, previous.index + previous.length);
-      moveViewportToSelection(previous.index);
-      onCursorPositionChange?.(getCursorPosition(textarea.value, previous.index));
-      return true;
-    },
+    const matchCacheRef = useRef<{
+      key: string;
+      matches: Array<{ index: number; length: number }>;
+    } | null>(null);
 
-    replaceCurrent(query: string, replaceWith: string, options?: FindOptions) {
-      const textarea = textareaRef.current;
-      if (!textarea || !query) {
-        return false;
-      }
+    useEffect(() => {
+      if (!containerRef.current) return;
 
-      const selectedText = textarea.value.slice(textarea.selectionStart, textarea.selectionEnd);
-      const selectedRegex = buildRegex(query, options);
-      if (!selectedRegex) {
-        return false;
-      }
-      const exactRegex = new RegExp(`^(?:${selectedRegex.source})$`, options?.caseSensitive ? '' : 'i');
-      if (!exactRegex.test(selectedText)) {
-        return false;
-      }
+      const isDark = document.documentElement.classList.contains('dark');
 
-      const before = textarea.value.slice(0, textarea.selectionStart);
-      const after = textarea.value.slice(textarea.selectionEnd);
-      const nextValue = `${before}${replaceWith}${after}`;
-      const nextStart = before.length;
-      const nextEnd = nextStart + replaceWith.length;
-
-      onChange(nextValue, getCursorPosition(nextValue, nextStart));
-      requestAnimationFrame(() => {
-        const active = textareaRef.current;
-        if (!active) {
-          return;
-        }
-        active.focus();
-        active.setSelectionRange(nextStart, nextEnd);
+      const state = EditorState.create({
+        doc: value,
+        extensions: [
+          lineNumbersCompartment.of(showLN ? lineNumbers() : []),
+          darkCompartment.of(isDark ? editorDarkOverrides : []),
+          history(),
+          keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+          indentUnit.of('  '),
+          markdown(),
+          highlightField,
+          editorBaseTheme,
+          drawSelection(),
+          highlightActiveLine(),
+          cmPlaceholder('Start typing your markdown here...'),
+          EditorView.lineWrapping,
+          EditorView.updateListener.of((update) => {
+            if (update.docChanged) {
+              suppressExternalRef.current = true;
+              const pos = update.state.selection.main.head;
+              const line = update.state.doc.lineAt(pos);
+              onCursorRef.current?.({
+                line: line.number,
+                col: pos - line.from + 1
+              });
+              clearTimeout(contentSyncTimer.current);
+              contentSyncTimer.current = setTimeout(() => {
+                const v = viewRef.current;
+                if (!v) return;
+                const doc = v.state.doc.toString();
+                const p = v.state.selection.main.head;
+                const l = v.state.doc.lineAt(p);
+                onChangeRef.current(doc, {
+                  line: l.number,
+                  col: p - l.from + 1
+                });
+              }, CONTENT_SYNC_DELAY);
+            } else if (update.selectionSet || update.focusChanged) {
+              const pos = update.state.selection.main.head;
+              const line = update.state.doc.lineAt(pos);
+              onCursorRef.current?.({
+                line: line.number,
+                col: pos - line.from + 1
+              });
+              if (splitSyncRef.current && onSplitNavRef.current && update.selectionSet) {
+                clearTimeout(splitSyncTimer.current);
+                splitSyncTimer.current = setTimeout(() => {
+                  const v = viewRef.current;
+                  if (!v) return;
+                  onSplitNavRef.current?.(v.state.selection.main.head);
+                }, SPLIT_SYNC_DELAY);
+              }
+            }
+          })
+        ]
       });
-      return true;
-    },
 
-    replaceAll(query: string, replaceWith: string, options?: FindOptions) {
-      const textarea = textareaRef.current;
-      if (!textarea || !query) {
-        return 0;
-      }
+      const view = new EditorView({ state, parent: containerRef.current });
+      viewRef.current = view;
 
-      const source = textarea.value;
-      const regex = buildRegex(query, options);
-      if (!regex) {
-        return 0;
-      }
-      const matches = source.match(regex);
-      const count = matches ? matches.length : 0;
-      if (!count) {
-        return 0;
-      }
-
-      const nextValue = source.replace(regex, replaceWith);
-      onChange(nextValue, getCursorPosition(nextValue, 0));
-      requestAnimationFrame(() => {
-        const active = textareaRef.current;
-        if (!active) {
-          return;
-        }
-        active.focus();
-        active.setSelectionRange(0, 0);
+      const observer = new MutationObserver(() => {
+        const nowDark = document.documentElement.classList.contains('dark');
+        view.dispatch({
+          effects: darkCompartment.reconfigure(nowDark ? editorDarkOverrides : [])
+        });
       });
-      return count;
-    },
+      observer.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['class']
+      });
 
-    getCurrentMatchIndex(query: string, options?: FindOptions) {
-      const textarea = textareaRef.current;
-      if (!textarea || !query) {
-        return -1;
-      }
-      const matches = findAllMatches(query, options);
-      if (!matches.length) {
-        return -1;
-      }
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const index = matches.findIndex((match) => match.index === start && (match.index + match.length) === end);
-      return index;
-    },
+      return () => {
+        clearTimeout(contentSyncTimer.current);
+        clearTimeout(splitSyncTimer.current);
+        observer.disconnect();
+        view.destroy();
+        viewRef.current = null;
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    countMatches(query: string, options?: FindOptions) {
-      return findAllMatches(query, options).length;
-    },
-
-    scrollToSourceOffset(offset: number) {
-      const textarea = textareaRef.current;
-      if (!textarea) {
+    useEffect(() => {
+      const view = viewRef.current;
+      if (!view) return;
+      if (suppressExternalRef.current) {
+        suppressExternalRef.current = false;
         return;
       }
-      const safe = Math.max(0, Math.min(offset, textarea.value.length));
-      textarea.focus();
-      textarea.setSelectionRange(safe, safe);
-      moveViewportToSelection(safe);
-      onCursorPositionChange?.(getCursorPosition(textarea.value, safe));
-    }
-  }), [onChange, onCursorPositionChange]);
+      const currentDoc = view.state.doc.toString();
+      if (currentDoc !== value) {
+        view.dispatch({
+          changes: { from: 0, to: currentDoc.length, insert: value }
+        });
+      }
+    }, [value]);
 
-  return (
-    <div className="relative h-full min-h-0 flex-1 flex overflow-hidden bg-background">
-      {showLineNumbers && (
-        <div
-          ref={lineNumbersRef}
-          className="w-12 bg-muted/30 border-r border-border overflow-hidden text-right pr-3 py-4 select-none"
-          style={{
-            fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-            fontSize: '14px',
-            lineHeight: '1.5',
-            color: 'var(--color-muted-foreground)'
-          }}
-        >
-          <div style={{ height: `${lineCount * EDITOR_LINE_HEIGHT}px`, position: 'relative' }}>
-            <div
-              style={{
-                position: 'absolute',
-                top: `${virtualLineRange.start * EDITOR_LINE_HEIGHT}px`,
-                left: 0,
-                right: 0
-              }}
-            >
-              {renderedLineNumbers.map((num) => (
-                <div key={num} style={{ height: `${EDITOR_LINE_HEIGHT}px` }}>
-                  {num}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-      <textarea
-        ref={textareaRef}
-        value={value}
-        onMouseDown={(e) => {
-          const target = e.currentTarget;
-          if (!cachedLineHeightRef.current) {
-            const styles = window.getComputedStyle(target);
-            cachedLineHeightRef.current = Number.parseFloat(styles.lineHeight) || EDITOR_LINE_HEIGHT;
-          }
-          const lineHeight = cachedLineHeightRef.current;
-          const paddingTop = 16;
-          const contentHeight = lineCount * lineHeight + paddingTop;
-          if (e.nativeEvent.offsetY > contentHeight) {
-            e.preventDefault();
-            target.focus();
-            const end = target.value.length;
-            target.setSelectionRange(end, end);
-            onCursorPositionChange?.(getCursorPosition(target.value, end));
-            if (splitPaneSync && onSplitPaneSourceNavigate) {
-              onSplitPaneSourceNavigate(end);
+    useEffect(() => {
+      const view = viewRef.current;
+      if (!view) return;
+      view.dispatch({
+        effects: lineNumbersCompartment.reconfigure(showLN ? lineNumbers() : [])
+      });
+    }, [showLN]);
+
+    useEffect(() => {
+      const view = viewRef.current;
+      if (!view) return;
+      const fo = findOpenRef.current;
+      const wm = workerMatchesRef.current;
+      const cm = currentMatchIndexRef.current;
+      if (!fo || !wm?.length) {
+        view.dispatch({
+          effects: setHighlightsEffect.of({ matches: [], active: -1 })
+        });
+        return;
+      }
+      view.dispatch({
+        effects: setHighlightsEffect.of({
+          matches: wm,
+          active: cm
+        })
+      });
+    }, [workerMatches, findOpen, currentMatchIndex]);
+
+    useEffect(() => {
+      const view = viewRef.current;
+      if (!view) return;
+      view.scrollDOM.scrollTo(0, 0);
+    }, [resetScrollToken]);
+
+    const findAllMatches = (query: string, options?: FindOptions) => {
+      const view = viewRef.current;
+      if (!view) return [];
+      const regex = buildRegex(query, options);
+      if (!regex) return [];
+      const content = view.state.doc.toString();
+      const cacheKey = [
+        content,
+        query,
+        options?.caseSensitive ? '1' : '0',
+        options?.useRegex ? '1' : '0',
+        options?.wholeWord ? '1' : '0'
+      ].join('\u0000');
+      if (matchCacheRef.current?.key === cacheKey) {
+        return matchCacheRef.current.matches;
+      }
+      const matches: Array<{ index: number; length: number }> = [];
+      let result: RegExpExecArray | null;
+      while ((result = regex.exec(content)) !== null) {
+        const len = result[0]?.length ?? 0;
+        if (len <= 0) {
+          regex.lastIndex += 1;
+          continue;
+        }
+        matches.push({ index: result.index, length: len });
+      }
+      matchCacheRef.current = { key: cacheKey, matches };
+      return matches;
+    };
+
+    const getCursorPos = (doc: ReturnType<typeof EditorState.create>['doc'], pos: number) => {
+      const line = doc.lineAt(pos);
+      return { line: line.number, col: pos - line.from + 1 };
+    };
+
+    const selectAndScroll = (view: EditorView, from: number, to: number) => {
+      view.dispatch({
+        selection: { anchor: from, head: to },
+        scrollIntoView: true
+      });
+      view.focus();
+      const line = view.state.doc.lineAt(from);
+      onCursorRef.current?.({ line: line.number, col: from - line.from + 1 });
+    };
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        findFirst(query: string, options?: FindOptions) {
+          const view = viewRef.current;
+          if (!view || !query) return false;
+          const matches = findAllMatches(query, options);
+          if (!matches.length) return false;
+          const m = matches[0];
+          selectAndScroll(view, m.index, m.index + m.length);
+          return true;
+        },
+
+        findNext(query: string, options?: FindOptions) {
+          const view = viewRef.current;
+          if (!view || !query) return false;
+          const matches = findAllMatches(query, options);
+          if (!matches.length) return false;
+          const fromIndex = view.state.selection.main.to;
+          const next = matches.find((m) => m.index >= fromIndex) ?? matches[0];
+          selectAndScroll(view, next.index, next.index + next.length);
+          return true;
+        },
+
+        findPrevious(query: string, options?: FindOptions) {
+          const view = viewRef.current;
+          if (!view || !query) return false;
+          const matches = findAllMatches(query, options);
+          if (!matches.length) return false;
+          const fromIndex = Math.max(0, view.state.selection.main.from - 1);
+          let prev = matches[matches.length - 1];
+          for (let i = matches.length - 1; i >= 0; i--) {
+            if (matches[i].index <= fromIndex) {
+              prev = matches[i];
+              break;
             }
           }
-        }}
-        onChange={(e) => onChange(e.target.value, getCursorPosition(e.target.value, e.target.selectionStart))}
-        onClick={(e) => {
-          const target = e.target as HTMLTextAreaElement;
-          onCursorPositionChange?.(getCursorPosition(target.value, target.selectionStart));
-          if (splitPaneSync && onSplitPaneSourceNavigate) {
-            onSplitPaneSourceNavigate(target.selectionStart);
-          }
-        }}
-        onKeyUp={(e) => {
-          const target = e.target as HTMLTextAreaElement;
-          onCursorPositionChange?.(getCursorPosition(target.value, target.selectionStart));
-        }}
-        onScroll={handleScroll}
-        className="relative z-10 h-full min-h-0 flex-1 overflow-y-auto p-4 bg-transparent text-foreground outline-none resize-none"
-        style={{
-          fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-          fontSize: '14px',
-          lineHeight: '1.5',
-          tabSize: 2
-        }}
-        spellCheck={false}
-        placeholder="Start typing your markdown here..."
-      />
+          selectAndScroll(view, prev.index, prev.index + prev.length);
+          return true;
+        },
+
+        replaceCurrent(query: string, replaceWith: string, options?: FindOptions) {
+          const view = viewRef.current;
+          if (!view || !query) return false;
+          const { from, to } = view.state.selection.main;
+          const selectedText = view.state.sliceDoc(from, to);
+          const selectedRegex = buildRegex(query, options);
+          if (!selectedRegex) return false;
+          const exactRegex = new RegExp(
+            `^(?:${selectedRegex.source})$`,
+            options?.caseSensitive ? '' : 'i'
+          );
+          if (!exactRegex.test(selectedText)) return false;
+          view.dispatch({
+            changes: { from, to, insert: replaceWith },
+            selection: { anchor: from, head: from + replaceWith.length }
+          });
+          clearTimeout(contentSyncTimer.current);
+          const newDoc = view.state.doc.toString();
+          const cursorPos = getCursorPos(view.state.doc, from);
+          onChangeRef.current(newDoc, cursorPos);
+          view.focus();
+          return true;
+        },
+
+        replaceAll(query: string, replaceWith: string, options?: FindOptions) {
+          const view = viewRef.current;
+          if (!view || !query) return 0;
+          const regex = buildRegex(query, options);
+          if (!regex) return 0;
+          const source = view.state.doc.toString();
+          const allMatches = source.match(regex);
+          const count = allMatches ? allMatches.length : 0;
+          if (!count) return 0;
+          const nextValue = source.replace(regex, replaceWith);
+          view.dispatch({
+            changes: { from: 0, to: source.length, insert: nextValue },
+            selection: { anchor: 0 }
+          });
+          clearTimeout(contentSyncTimer.current);
+          const cursorPos = getCursorPos(view.state.doc, 0);
+          onChangeRef.current(nextValue, cursorPos);
+          view.focus();
+          return count;
+        },
+
+        getCurrentMatchIndex(query: string, options?: FindOptions) {
+          const view = viewRef.current;
+          if (!view || !query) return -1;
+          const matches = findAllMatches(query, options);
+          if (!matches.length) return -1;
+          const { from, to } = view.state.selection.main;
+          return matches.findIndex(
+            (m) => m.index === from && m.index + m.length === to
+          );
+        },
+
+        countMatches(query: string, options?: FindOptions) {
+          return findAllMatches(query, options).length;
+        },
+
+        scrollToSourceOffset(offset: number) {
+          const view = viewRef.current;
+          if (!view) return;
+          const safe = Math.max(0, Math.min(offset, view.state.doc.length));
+          selectAndScroll(view, safe, safe);
+        }
+      }),
+      []
+    );
+
+    return (
       <div
-        ref={overlayContainerRef}
-        aria-hidden
-        className="pointer-events-none absolute inset-y-0 right-0 z-0 overflow-hidden"
-        style={{ left: showLineNumbers ? '48px' : '0px', display: 'none' }}
-      >
-        <pre
-          ref={overlayRef}
-          className="m-0 h-full min-h-0 overflow-hidden p-4 whitespace-pre-wrap break-words"
-          style={{
-            fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-            fontSize: '14px',
-            lineHeight: '1.5',
-            tabSize: 2,
-            color: 'transparent',
-            transform: `translateY(-${scrollTop}px)`
-          }}
-        />
-      </div>
-    </div>
-  );
-}), (prev, next) => {
-  if (prev.value !== next.value) return false;
-  if (prev.onChange !== next.onChange) return false;
-  if (prev.onCursorPositionChange !== next.onCursorPositionChange) return false;
-  if (prev.showLineNumbers !== next.showLineNumbers) return false;
-  if (prev.resetScrollToken !== next.resetScrollToken) return false;
-  if (prev.splitPaneSync !== next.splitPaneSync) return false;
-  if (prev.onSplitPaneSourceNavigate !== next.onSplitPaneSourceNavigate) return false;
-  if (prev.workerMatches !== next.workerMatches) return false;
-  if (prev.findOpen !== next.findOpen) return false;
-  if (prev.currentMatchIndex !== next.currentMatchIndex) return false;
-  return true;
-});
+        ref={containerRef}
+        className="h-full min-h-0 flex-1 overflow-hidden bg-background"
+      />
+    );
+  }),
+  (prev, next) => {
+    if (prev.value !== next.value) return false;
+    if (prev.onChange !== next.onChange) return false;
+    if (prev.showLineNumbers !== next.showLineNumbers) return false;
+    if (prev.resetScrollToken !== next.resetScrollToken) return false;
+    return true;
+  }
+);

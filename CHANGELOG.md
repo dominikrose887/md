@@ -11,35 +11,33 @@ Use this section while developing. Before a release, move bullets into a new `##
 
 ## [1.3.0] - 2026-04-29
 
-### Fixed
-
-- **Significant performance optimisation across the entire application**:
-  - **Bundle size**: removed 181 unused npm packages (MUI, 20+ Radix UI, recharts, react-router, react-dnd, motion, etc.) and eliminated `next-themes` dependency from the Toaster component.
-  - **Code splitting**: the build now emits separate chunks for `react-vendor`, `markdown`, `katex`, and `syntax-highlight`; the main application chunk dropped to ~108 kB.
-  - **Lazy-loaded syntax highlighter**: `react-syntax-highlighter` (~1.6 MB) is loaded on demand when the first code block appears, no longer blocking initial page load.
-  - **Preview deferred in split mode**: the preview pane now uses `useDeferredValue` content in split view, preventing the full markdown pipeline from blocking editor input on every keystroke.
-  - **Offscreen Preview eliminated**: editor-only mode no longer renders a hidden Preview continuously; it is only instantiated during PDF export.
-  - **Search highlight race condition**: preview DOM highlighting now runs via `requestAnimationFrame` after React commits, fixing intermittent missing highlights.
-  - **Editor highlight overlay**: the `<pre>` highlight overlay is no longer mounted when find is closed, eliminating unnecessary DOM work during normal editing.
-  - **findNext / findPrevious 660× faster**: viewport scrolling now uses binary search on a pre-computed line-offset array instead of a per-call O(n) character scan (66 ms → 0.1 ms per call on a 1 100-line document).
-  - **getComputedStyle caching**: line-height is read once and cached, removing repeated style recalculations during search navigation and mouse interaction.
-  - **mouseDown allocation removed**: click hit-testing reuses the already-computed `lineCount` instead of `value.split('\n').length`.
-
 ### Changed
 
+- **Editor replaced with CodeMirror 6**: the native `<textarea>` and all associated workarounds (custom line-number virtualization, `innerHTML` highlight overlay, `getComputedStyle` caching, binary-search scroll positioning) have been replaced with CodeMirror 6. The new editor provides virtualized rendering (only visible lines exist in the DOM), built-in line numbers, markdown syntax highlighting, native decoration-based search highlighting, undo/redo history, and line wrapping — all out of the box.
 - **Search architecture rewritten for zero-lag input**:
-  - **Isolated FindBar component**: the search input manages its own local state; typing no longer triggers React re-renders of the Editor, Preview, or any parent component — the UI thread stays completely free during input.
-  - **Debouncing (150 ms)**: the search query propagates to the application only after the user pauses for 150 ms, collapsing rapid key presses into a single search run.
-  - **Web Worker (background thread)**: all regex matching runs in a dedicated Web Worker off the main thread, so even when the search executes, it cannot block scrolling or typing.
-  - **Incremental search**: when extending a query (e.g. `app` → `apple`), only previous matches are re-checked instead of rescanning the entire document from scratch.
-  - **Content indexing**: the editor pre-computes a line-offset index on file open; the search worker uses this for efficient position lookups without re-parsing the full text.
-  - **DOM-based highlight overlay**: the Editor's highlight `<pre>` uses direct `innerHTML` manipulation instead of React reconciliation, eliminating the creation of thousands of React virtual nodes for large documents.
-  - **Preview no longer re-renders on search state changes**: a custom `React.memo` comparator excludes search-related props; highlighting is applied imperatively via DOM TreeWalker without re-running the markdown pipeline (react-markdown, rehype, katex, syntax-highlight).
+  - **Isolated FindBar component**: the search input manages its own local state and debounces internally (150 ms); typing never triggers React re-renders of the Editor, Preview, or App.
+  - **Lazy Web Worker pool**: search workers are created only when the user first opens find (not at app startup). A single worker handles normal searches; for large files (100K+ chars) the pool scales to 4 workers that scan content chunks in parallel.
+  - **Incremental search**: extending a query (e.g. `app` → `apple`) re-checks only the previous match set instead of rescanning the entire document.
+  - **CodeMirror decorations for Editor highlights**: search matches are rendered via CodeMirror's `Decoration.mark()` API, leveraging its native viewport-aware rendering — no custom overlay DOM needed.
+  - **Preview highlights applied imperatively**: a custom `React.memo` comparator excludes all search-related props from Preview; highlighting is applied via DOM TreeWalker without re-running the markdown pipeline.
+- **Debounced content sync (200 ms)**: CodeMirror owns the document state; changes propagate to React only after the user pauses typing, eliminating the per-keystroke `doc.toString()` + `setContent()` re-render cascade that previously froze the UI on large documents.
+- **Debounced split-pane sync (150 ms)**: clicking or navigating in the editor no longer triggers immediate Preview scrolling on every cursor movement; scroll sync is throttled to avoid blocking the main thread.
+- **Preview markdown pipeline deferred**: `useDeferredValue` wraps the prepared content inside Preview, making the heavy react-markdown + rehype + katex + syntax-highlight pipeline interruptible during typing in split mode.
+
+### Fixed
+
+- **Bundle size**: removed 181 unused npm packages and eliminated the `next-themes` dependency from the Toaster component.
+- **Code splitting**: the build emits separate chunks for `react-vendor`, `markdown`, `katex`, `syntax-highlight`, and `codemirror`; the main application chunk is ~112 kB.
+- **Lazy-loaded syntax highlighter**: `react-syntax-highlighter` (~1.6 MB) loads on demand when the first code block appears in the Preview.
+- **Offscreen Preview eliminated**: editor-only mode no longer renders a hidden Preview continuously; it is only instantiated during PDF export.
+- **Search highlight race condition**: Preview DOM highlighting runs via `requestAnimationFrame` after React commits, fixing intermittent missing highlights.
+- **Editor memo optimized**: the Editor's `React.memo` comparator ignores `findOpen`, `workerMatches`, and `currentMatchIndex` (all handled by refs + CodeMirror effects), preventing unnecessary React re-renders when search state changes.
+- **Stable callback references**: `onSplitPanePreviewNavigate` and similar callbacks are wrapped in `useCallback` to prevent child memo invalidation on every App re-render.
 
 ### Added
 
-- **Disabled controls when no document is open**: view-mode buttons (split / editor / preview), the find-and-replace toggle, and `Ctrl+F` are now disabled until a file is opened, preventing interaction with an empty workspace.
-- **Performance benchmark test suite** (`performance.test.tsx`): 21 automated benchmarks covering preview render, editor render, search, highlighting, view switching, and raw computation on a generated ~1 100-line markdown document with code blocks, tables, math, and TOC links.
+- **Disabled controls when no document is open**: view-mode buttons, the find-and-replace toggle, and `Ctrl+F` are disabled until a file is opened.
+- **Performance benchmark test suite** (`performance.test.tsx`): 21 automated benchmarks covering preview render, editor render, search, highlighting, view switching, and raw computation on a generated ~1 100-line markdown document.
 
 ## [1.2.13] - 2026-04-28
 

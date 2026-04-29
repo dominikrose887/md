@@ -9,12 +9,17 @@ interface SearchRequest {
   };
   previousMatches?: Array<{ index: number; length: number }>;
   previousQuery?: string;
+  /** Byte offset of this chunk within the full document (for worker-pool mode). */
+  contentOffset?: number;
+  /** Worker index within the pool (echoed back in response). */
+  poolIndex?: number;
 }
 
 interface SearchResponse {
   id: number;
   matches: Array<{ index: number; length: number }>;
   totalCount: number;
+  poolIndex?: number;
 }
 
 function escapeRegex(str: string): string {
@@ -77,17 +82,17 @@ function incrementalSearch(
 }
 
 self.onmessage = (e: MessageEvent<SearchRequest>) => {
-  const { id, content, query, options, previousMatches, previousQuery } = e.data;
+  const { id, content, query, options, previousMatches, previousQuery, contentOffset = 0, poolIndex } = e.data;
 
   if (!query.trim()) {
-    const response: SearchResponse = { id, matches: [], totalCount: 0 };
+    const response: SearchResponse = { id, matches: [], totalCount: 0, poolIndex };
     self.postMessage(response);
     return;
   }
 
   const regex = buildRegex(query, options);
   if (!regex) {
-    const response: SearchResponse = { id, matches: [], totalCount: 0 };
+    const response: SearchResponse = { id, matches: [], totalCount: 0, poolIndex };
     self.postMessage(response);
     return;
   }
@@ -104,6 +109,12 @@ self.onmessage = (e: MessageEvent<SearchRequest>) => {
     matches = fullSearch(content, regex);
   }
 
-  const response: SearchResponse = { id, matches, totalCount: matches.length };
+  if (contentOffset > 0) {
+    for (let i = 0; i < matches.length; i++) {
+      matches[i] = { index: matches[i].index + contentOffset, length: matches[i].length };
+    }
+  }
+
+  const response: SearchResponse = { id, matches, totalCount: matches.length, poolIndex };
   self.postMessage(response);
 };

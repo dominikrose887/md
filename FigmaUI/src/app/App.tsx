@@ -407,6 +407,10 @@ export default function App() {
     previewRef.current?.scrollToSourceOffset(offset);
   }, []);
 
+  const handlePreviewSourceNavigate = useCallback((offset: number) => {
+    editorRef.current?.scrollToSourceOffset(offset);
+  }, []);
+
   const ensureEditorForSearch = () => {
     if (editorRef.current) {
       return true;
@@ -719,7 +723,7 @@ export default function App() {
                   resetScrollToken={resetScrollToken}
                   assignPdfPrintRootId
                   splitPaneSync={viewMode === 'split'}
-                  onSplitPanePreviewNavigate={(offset) => editorRef.current?.scrollToSourceOffset(offset)}
+                  onSplitPanePreviewNavigate={handlePreviewSourceNavigate}
                   findOpen={findOpen}
                   searchQuery={findQuery}
                   searchOptions={findOptions}

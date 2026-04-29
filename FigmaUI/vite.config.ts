@@ -16,6 +16,7 @@ export default defineConfig({
           'markdown': ['react-markdown', 'remark-gfm', 'remark-math', 'rehype-raw', 'rehype-katex', 'rehype-sanitize'],
           'katex': ['katex'],
           'syntax-highlight': ['react-syntax-highlighter'],
+          'codemirror': ['@codemirror/state', '@codemirror/view', '@codemirror/commands', '@codemirror/language', '@codemirror/lang-markdown'],
         }
       }
     }
