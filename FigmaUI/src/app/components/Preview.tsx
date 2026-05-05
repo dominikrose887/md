@@ -53,6 +53,29 @@ import type { FindOptions } from './Editor';
 
 const KATEX_REHYPE_OPTIONS = { output: 'html' as const, throwOnError: false };
 
+function flattenText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map(flattenText).join('');
+  }
+  if (React.isValidElement(node)) {
+    return flattenText((node.props as { children?: ReactNode } | null)?.children ?? '');
+  }
+  return '';
+}
+
+function slugifyHeading(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w\s-]/g, '')
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 function resolveFenceLanguage(className?: string) {
   const match = /language-([\w#+-]+)/i.exec(className || '');
   if (!match) {
@@ -509,19 +532,39 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
     }
   };
 
-  const markdownComponents = useMemo(
-    () => ({
-      h1({ children, ...props }: any) {
-        return <h1 {...props}>{children}</h1>;
+  const markdownComponents = useMemo(() => {
+    const headingSlugCounts = new Map<string, number>();
+    const resolveHeadingId = (children: ReactNode, explicitId?: string) => {
+      if (explicitId) {
+        return explicitId;
+      }
+      const base = slugifyHeading(flattenText(children));
+      if (!base) {
+        return undefined;
+      }
+      const count = headingSlugCounts.get(base) ?? 0;
+      headingSlugCounts.set(base, count + 1);
+      return count === 0 ? base : `${base}-${count}`;
+    };
+
+    return {
+      h1({ children, id, ...props }: any) {
+        return <h1 id={resolveHeadingId(children, id)} {...props}>{children}</h1>;
       },
-      h2({ children, ...props }: any) {
-        return <h2 {...props}>{children}</h2>;
+      h2({ children, id, ...props }: any) {
+        return <h2 id={resolveHeadingId(children, id)} {...props}>{children}</h2>;
       },
-      h3({ children, ...props }: any) {
-        return <h3 {...props}>{children}</h3>;
+      h3({ children, id, ...props }: any) {
+        return <h3 id={resolveHeadingId(children, id)} {...props}>{children}</h3>;
       },
-      h4({ children, ...props }: any) {
-        return <h4 {...props}>{children}</h4>;
+      h4({ children, id, ...props }: any) {
+        return <h4 id={resolveHeadingId(children, id)} {...props}>{children}</h4>;
+      },
+      h5({ children, id, ...props }: any) {
+        return <h5 id={resolveHeadingId(children, id)} {...props}>{children}</h5>;
+      },
+      h6({ children, id, ...props }: any) {
+        return <h6 id={resolveHeadingId(children, id)} {...props}>{children}</h6>;
       },
       p({ children, ...props }: any) {
         return <p {...props}>{children}</p>;
@@ -604,9 +647,8 @@ const PreviewInner = forwardRef<PreviewHandle, PreviewProps>(function PreviewInn
           </code>
         );
       }
-    }),
-    [theme, filePath]
-  );
+    };
+  }, [theme, filePath, deferredPreparedContent]);
 
   return (
     <div
