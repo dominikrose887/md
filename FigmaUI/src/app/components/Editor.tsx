@@ -15,6 +15,7 @@ import { markdown } from '@codemirror/lang-markdown';
 import { indentUnit } from '@codemirror/language';
 
 interface EditorProps {
+  documentId?: string;
   value: string;
   onChange: (value: string, cursorPosition: { line: number; col: number }) => void;
   onCursorPositionChange?: (cursorPosition: { line: number; col: number }) => void;
@@ -176,6 +177,7 @@ function buildRegex(query: string, options?: FindOptions): RegExp | null {
 export const Editor = memo(
   forwardRef<EditorHandle, EditorProps>(function EditorInner(
     {
+      documentId,
       value,
       onChange,
       onCursorPositionChange,
@@ -198,10 +200,12 @@ export const Editor = memo(
     const suppressExternalRef = useRef(false);
     const contentSyncTimer = useRef<ReturnType<typeof setTimeout> | undefined>();
     const splitSyncTimer = useRef<ReturnType<typeof setTimeout> | undefined>();
+    const documentIdRef = useRef(documentId ?? '');
     onChangeRef.current = onChange;
     onCursorRef.current = onCursorPositionChange;
     splitSyncRef.current = splitPaneSync;
     onSplitNavRef.current = onSplitPaneSourceNavigate;
+    documentIdRef.current = documentId ?? '';
 
     const findOpenRef = useRef(findOpen);
     const workerMatchesRef = useRef(workerMatches);
@@ -245,7 +249,11 @@ export const Editor = memo(
                 col: pos - line.from + 1
               });
               clearTimeout(contentSyncTimer.current);
+              const changeDocumentId = documentIdRef.current;
               contentSyncTimer.current = setTimeout(() => {
+                if (changeDocumentId !== documentIdRef.current) {
+                  return;
+                }
                 const v = viewRef.current;
                 if (!v) return;
                 const doc = v.state.doc.toString();
@@ -299,6 +307,19 @@ export const Editor = memo(
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    useEffect(() => {
+      const view = viewRef.current;
+      if (!view) return;
+      clearTimeout(contentSyncTimer.current);
+      suppressExternalRef.current = false;
+      const currentDoc = view.state.doc.toString();
+      if (currentDoc !== value) {
+        view.dispatch({
+          changes: { from: 0, to: currentDoc.length, insert: value }
+        });
+      }
+    }, [documentId]);
 
     useEffect(() => {
       const view = viewRef.current;
@@ -513,6 +534,7 @@ export const Editor = memo(
     );
   }),
   (prev, next) => {
+    if (prev.documentId !== next.documentId) return false;
     if (prev.value !== next.value) return false;
     if (prev.onChange !== next.onChange) return false;
     if (prev.showLineNumbers !== next.showLineNumbers) return false;

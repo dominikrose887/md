@@ -3,12 +3,16 @@ interface MdStudioFileResult {
   path?: string;
   name?: string;
   content?: string;
+  version?: string;
 }
 
 interface MdStudioSaveResult {
   canceled: boolean;
   path?: string;
   name?: string;
+  version?: string;
+  conflict?: boolean;
+  content?: string;
 }
 
 interface MdStudioPdfResult {
@@ -35,8 +39,10 @@ interface MdStudioCloseSaveResultPayload {
 
 interface MdStudioApi {
   openFileDialog: () => Promise<MdStudioFileResult>;
-  saveFile: (payload: { path?: string | null; suggestedName?: string; content: string }) => Promise<MdStudioSaveResult>;
+  saveFile: (payload: { path?: string | null; suggestedName?: string; content: string; expectedVersion?: string | null }) => Promise<MdStudioSaveResult>;
   readFile: (filePath: string) => Promise<MdStudioFileResult>;
+  watchFile: (filePath: string) => Promise<{ ok: boolean }>;
+  unwatchFile: (filePath: string) => Promise<{ ok: boolean }>;
   getLaunchFile: () => Promise<string | null>;
   confirmSaveBeforePdf: () => Promise<number>;
   exportPdf: (payload: { suggestedFileName: string }) => Promise<MdStudioPdfResult>;
@@ -44,6 +50,7 @@ interface MdStudioApi {
   reportCloseSaveResult: (payload: MdStudioCloseSaveResultPayload) => void;
   onCloseSaveRequest: (callback: (payload: MdStudioCloseSaveRequestPayload) => void) => () => void;
   onOpenFilePath: (callback: (filePath: string) => void) => () => void;
+  onFileChanged: (callback: (payload: { path: string }) => void) => () => void;
 }
 
 interface Window {

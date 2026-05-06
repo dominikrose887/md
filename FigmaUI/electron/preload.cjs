@@ -4,6 +4,8 @@ contextBridge.exposeInMainWorld('mdStudio', {
   openFileDialog: () => ipcRenderer.invoke('mdstudio:open-file-dialog'),
   saveFile: (payload) => ipcRenderer.invoke('mdstudio:save-file', payload),
   readFile: (filePath) => ipcRenderer.invoke('mdstudio:read-file', filePath),
+  watchFile: (filePath) => ipcRenderer.invoke('mdstudio:watch-file', filePath),
+  unwatchFile: (filePath) => ipcRenderer.invoke('mdstudio:unwatch-file', filePath),
   getLaunchFile: () => ipcRenderer.invoke('mdstudio:get-launch-file'),
   confirmSaveBeforePdf: () => ipcRenderer.invoke('mdstudio:confirm-save-before-pdf'),
   exportPdf: (payload) => ipcRenderer.invoke('mdstudio:export-pdf', payload),
@@ -18,5 +20,10 @@ contextBridge.exposeInMainWorld('mdStudio', {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('mdstudio:open-file-path', listener);
     return () => ipcRenderer.removeListener('mdstudio:open-file-path', listener);
+  },
+  onFileChanged: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('mdstudio:file-changed', listener);
+    return () => ipcRenderer.removeListener('mdstudio:file-changed', listener);
   }
 });

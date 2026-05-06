@@ -9,6 +9,31 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) vi
 
 Use this section while developing. Before a release, move bullets into a new `## [X.Y.Z] - date` section and bump `FigmaUI/package.json` (see [`FigmaUI/RELEASING.md`](./FigmaUI/RELEASING.md)).
 
+## [1.4.1] - 2026-05-06
+
+### Fixed
+
+- **Split-view tab switch desync**: when switching between tabs in split view, the raw editor could briefly remain on the previous tab while preview already showed the new tab. Editor document sync now resets stale deferred updates on tab switch and applies the active tab content immediately.
+
+## [1.4.0] - 2026-05-06
+
+### Added
+
+- **Browser-style tab strip**: multiple open documents are now shown as tabs under the toolbar; opening additional files creates additional tabs instead of replacing the current document.
+- **Tab context actions and reordering**: tabs support drag-and-drop reordering plus right-click actions for **Rename**, **Close**, **Close all but this**, and **Close tabs to the right**.
+- **Unsaved-change tab close prompts**: closing a dirty tab now asks whether to save, discard, or keep the tab open.
+- **External file watch IPC**: Electron now exposes file watch/unwatch events to the renderer for live on-disk change detection.
+
+### Changed
+
+- **Per-tab document state**: editor content, saved content, cursor position, and file metadata are now tracked independently per tab.
+- **Internal-link reliability in preview**: heading IDs are now auto-generated from heading text, including duplicate slug handling, so TOC/hash links can resolve correctly in rendered markdown.
+
+### Fixed
+
+- **Conflict-safe save flow**: saves now include an expected disk version; if the file changed externally, save is blocked instead of silently overwriting newer on-disk content.
+- **External modification handling**: if a file changes on disk while open, clean tabs auto-reload safely, while dirty tabs enter conflict state and require explicit user choice.
+
 ## [1.3.0] - 2026-04-29
 
 ### Changed
@@ -180,7 +205,9 @@ First public baseline for **MD Studio**: Electron + Vite + React Markdown editor
 - Windows **NSIS** installer and **portable** `.exe` via `electron-builder`.
 - `npm run build:release` and [`FigmaUI/build-github-release.ps1`](./FigmaUI/build-github-release.ps1) for GitHub Release artifacts and `SHA256SUMS.txt`.
 
-[Unreleased]: https://github.com/dominikrose887/md/compare/v1.3.0...HEAD  
+[Unreleased]: https://github.com/dominikrose887/md/compare/v1.4.1...HEAD  
+[1.4.1]: https://github.com/dominikrose887/md/compare/v1.4.0...v1.4.1  
+[1.4.0]: https://github.com/dominikrose887/md/compare/v1.3.0...v1.4.0  
 [1.3.0]: https://github.com/dominikrose887/md/compare/v1.2.13...v1.3.0  
 [1.2.13]: https://github.com/dominikrose887/md/compare/v1.2.12...v1.2.13  
 [1.2.12]: https://github.com/dominikrose887/md/compare/v1.2.11...v1.2.12  

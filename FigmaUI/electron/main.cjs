@@ -1,6 +1,7 @@
 const { app, BrowserWindow, dialog, ipcMain, screen } = require('electron');
 const path = require('path');
-const fs = require('fs/promises');
+const fs = require('fs');
+const fsPromises = require('fs/promises');
 
 const isDev = !app.isPackaged;
 const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173';
@@ -13,6 +14,8 @@ const WINDOW_STATE_FILE = 'window-state.json';
 const DEFAULT_WINDOW_BOUNDS = { width: 1400, height: 900 };
 const closeStateByWebContentsId = new Map();
 const pendingCloseSaveRequests = new Map();
+const fileWatchersByKey = new Map();
+const watchedPathsByWebContentsId = new Map();
 
 function getWindowStateFilePath() {
   return path.join(app.getPath('userData'), WINDOW_STATE_FILE);
@@ -42,7 +45,7 @@ function isBoundsVisible(bounds) {
 
 async function readWindowState() {
   try {
-    const raw = await fs.readFile(getWindowStateFilePath(), 'utf8');
+    const raw = await fsPromises.readFile(getWindowStateFilePath(), 'utf8');
     const parsed = JSON.parse(raw);
     if (!isValidBounds(parsed.bounds) || !isBoundsVisible(parsed.bounds)) {
       return null;
@@ -67,7 +70,7 @@ async function writeWindowState(win) {
     isFullScreen: win.isFullScreen()
   };
   try {
-    await fs.writeFile(getWindowStateFilePath(), JSON.stringify(state, null, 2), 'utf8');
+    await fsPromises.writeFile(getWindowStateFilePath(), JSON.stringify(state, null, 2), 'utf8');
   } catch (err) {
     console.error('mdstudio:save-window-state', err);
   }
@@ -101,13 +104,39 @@ function getMarkdownArg(argv) {
 }
 
 async function readMarkdownFile(filePath) {
-  const content = await fs.readFile(filePath, 'utf8');
+  const content = await fsPromises.readFile(filePath, 'utf8');
+  const stat = await fsPromises.stat(filePath);
   return {
     canceled: false,
     path: filePath,
     name: path.basename(filePath),
-    content
+    content,
+    version: `${stat.mtimeMs}:${stat.size}`
   };
+}
+
+function watchKey(webContentsId, filePath) {
+  return `${webContentsId}:${filePath}`;
+}
+
+function clearWatchersForWebContents(webContentsId) {
+  const watched = watchedPathsByWebContentsId.get(webContentsId);
+  if (!watched) {
+    return;
+  }
+  for (const watchedPath of watched) {
+    const key = watchKey(webContentsId, watchedPath);
+    const entry = fileWatchersByKey.get(key);
+    if (!entry) {
+      continue;
+    }
+    if (entry.timer) {
+      clearTimeout(entry.timer);
+    }
+    entry.watcher.close();
+    fileWatchersByKey.delete(key);
+  }
+  watchedPathsByWebContentsId.delete(webContentsId);
 }
 
 async function createWindow() {
@@ -212,6 +241,7 @@ async function createWindow() {
     }
   });
   win.on('closed', () => {
+    clearWatchersForWebContents(webContentsId);
     closeStateByWebContentsId.delete(webContentsId);
     mainWindow = null;
     isClosingAllowed = false;
@@ -272,7 +302,7 @@ ipcMain.handle('mdstudio:read-file', async (_event, filePath) => {
 });
 
 ipcMain.handle('mdstudio:save-file', async (_event, payload) => {
-  const { path: targetPath, content, suggestedName } = payload || {};
+  const { path: targetPath, content, suggestedName, expectedVersion } = payload || {};
   let outputPath = targetPath;
 
   if (!outputPath) {
@@ -290,12 +320,114 @@ ipcMain.handle('mdstudio:save-file', async (_event, payload) => {
     outputPath = saveResult.filePath;
   }
 
-  await fs.writeFile(outputPath, content ?? '', 'utf8');
+  if (expectedVersion && outputPath) {
+    try {
+      const existingStat = await fsPromises.stat(outputPath);
+      const currentVersion = `${existingStat.mtimeMs}:${existingStat.size}`;
+      if (currentVersion !== expectedVersion) {
+        const currentContent = await fsPromises.readFile(outputPath, 'utf8');
+        return {
+          canceled: true,
+          conflict: true,
+          path: outputPath,
+          name: path.basename(outputPath),
+          content: currentContent,
+          version: currentVersion
+        };
+      }
+    } catch {
+      // File might not exist yet. In that case proceed with write.
+    }
+  }
+
+  await fsPromises.writeFile(outputPath, content ?? '', 'utf8');
+  const updatedStat = await fsPromises.stat(outputPath);
   return {
     canceled: false,
     path: outputPath,
-    name: path.basename(outputPath)
+    name: path.basename(outputPath),
+    version: `${updatedStat.mtimeMs}:${updatedStat.size}`
   };
+});
+
+ipcMain.handle('mdstudio:watch-file', (event, filePath) => {
+  if (!filePath || typeof filePath !== 'string') {
+    return { ok: false };
+  }
+  const senderId = event.sender.id;
+  const key = watchKey(senderId, filePath);
+  if (fileWatchersByKey.has(key)) {
+    return { ok: true };
+  }
+  try {
+    const watcher = fs.watch(filePath, { persistent: false }, () => {
+      const entry = fileWatchersByKey.get(key);
+      if (!entry) {
+        return;
+      }
+      if (entry.timer) {
+        clearTimeout(entry.timer);
+      }
+      entry.timer = setTimeout(() => {
+        if (!entry.webContents.isDestroyed()) {
+          entry.webContents.send('mdstudio:file-changed', { path: filePath });
+        }
+      }, 200);
+    });
+    watcher.on('error', () => {
+      const entry = fileWatchersByKey.get(key);
+      if (!entry) {
+        return;
+      }
+      if (entry.timer) {
+        clearTimeout(entry.timer);
+      }
+      fileWatchersByKey.delete(key);
+      const watched = watchedPathsByWebContentsId.get(senderId);
+      if (watched) {
+        watched.delete(filePath);
+        if (watched.size === 0) {
+          watchedPathsByWebContentsId.delete(senderId);
+        }
+      }
+    });
+    fileWatchersByKey.set(key, {
+      watcher,
+      timer: null,
+      webContents: event.sender
+    });
+    const watched = watchedPathsByWebContentsId.get(senderId) ?? new Set();
+    watched.add(filePath);
+    watchedPathsByWebContentsId.set(senderId, watched);
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+});
+
+ipcMain.handle('mdstudio:unwatch-file', (event, filePath) => {
+  if (!filePath || typeof filePath !== 'string') {
+    return { ok: false };
+  }
+  const senderId = event.sender.id;
+  const key = watchKey(senderId, filePath);
+  const entry = fileWatchersByKey.get(key);
+  if (!entry) {
+    return { ok: true };
+  }
+  if (entry.timer) {
+    clearTimeout(entry.timer);
+  }
+  entry.watcher.close();
+  fileWatchersByKey.delete(key);
+  const watched = watchedPathsByWebContentsId.get(senderId);
+  if (watched) {
+    watched.delete(filePath);
+    if (watched.size === 0) {
+      watchedPathsByWebContentsId.delete(senderId);
+    }
+  }
+  return { ok: true };
 });
 
 ipcMain.handle('mdstudio:get-launch-file', () => {
@@ -338,7 +470,7 @@ ipcMain.handle('mdstudio:export-pdf', async (_event, payload) => {
     if (saveResult.canceled || !saveResult.filePath) {
       return { canceled: true };
     }
-    await fs.writeFile(saveResult.filePath, data);
+    await fsPromises.writeFile(saveResult.filePath, data);
     return { canceled: false, path: saveResult.filePath };
   } catch (err) {
     console.error('mdstudio:export-pdf', err);
