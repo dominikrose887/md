@@ -112,13 +112,10 @@ export default function App() {
     ) => {
       const normalized = normalizeToLf(text);
       const resolvedPath = fullPath || name;
-      let activatedTabId: string | null = null;
-
-      setTabs((prev) => {
-        const existing = prev.find((tab) => tab.filePath === resolvedPath);
-        if (existing) {
-          activatedTabId = existing.id;
-          return prev.map((tab) =>
+      const existing = tabsRef.current.find((tab) => tab.filePath === resolvedPath);
+      if (existing) {
+        setTabs((prev) =>
+          prev.map((tab) =>
             tab.id === existing.id
               ? {
                   ...tab,
@@ -134,8 +131,10 @@ export default function App() {
                   externalContent: undefined
                 }
               : tab
-          );
-        }
+          )
+        );
+        setActiveTabId(existing.id);
+      } else {
         const nextTab: OpenTab = {
           id: makeTabId(),
           fileName: name,
@@ -150,12 +149,8 @@ export default function App() {
           diskVersion: version,
           syncState: 'clean'
         };
-        activatedTabId = nextTab.id;
-        return [...prev, nextTab];
-      });
-
-      if (activatedTabId) {
-        setActiveTabId(activatedTabId);
+        setTabs((prev) => [...prev, nextTab]);
+        setActiveTabId(nextTab.id);
       }
       setShowError(false);
       setResetScrollToken((prev) => prev + 1);

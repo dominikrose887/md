@@ -14,6 +14,7 @@ Use this section while developing. Before a release, move bullets into a new `##
 ### Fixed
 
 - **Split-view tab switch desync**: when switching between tabs in split view, the raw editor could briefly remain on the previous tab while preview already showed the new tab. Editor document sync now resets stale deferred updates on tab switch and applies the active tab content immediately.
+- **Double-click open activation**: opening a `.md` file from the OS now immediately activates and displays the opened document tab instead of leaving the empty start screen until manual tab selection.
 
 ## [1.4.0] - 2026-05-06
 
